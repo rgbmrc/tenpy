@@ -837,6 +837,7 @@ class DMRGEngine(Sweep):
                     logger.info("Convergence criterium reached with enabled mixer. "
                                 "Disable mixer and continue")
                     self.mixer = None
+                    self.chi_list = None
                     self.S_inv_cutoff = 1.e-15
             if loop_start_time - start_time > max_seconds:
                 self.shelve = True
