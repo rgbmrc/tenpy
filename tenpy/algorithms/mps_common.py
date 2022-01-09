@@ -320,7 +320,16 @@ class Sweep(Algorithm):
         if resume_data is not None and 'sweeps' in resume_data:
             self.sweeps = resume_data['sweeps']
         self.shelve = False
-        self.chi_list = self.options.get('chi_list', None)
+        chi_list = self.options.silent_get('chi_list', None)
+        if chi_list is None:
+            chi_geomspace = self.options.get('chi_geomspace', None)
+            if chi_geomspace is not None:
+                chi_list = dict(
+                    zip(
+                        np.arange(chi_geomspace['num']),
+                        np.geomspace(**chi_geomspace, dtype=int),
+                    ))
+        self.chi_list = self.options.get('chi_list', chi_list)
         if self.chi_list is not None:
             done = [k for k in self.chi_list.keys() if k < self.sweeps]
             if len(done) > 0:
