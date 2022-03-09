@@ -46,7 +46,7 @@ from ..networks import mpo  # used to construct the Hamiltonian as MPO
 from ..networks.terms import OnsiteTerms, CouplingTerms, MultiCouplingTerms
 from ..networks.terms import ExponentiallyDecayingTerms, order_combine_term
 from ..networks.site import group_sites
-from ..tools.hdf5_io import Hdf5Exportable
+from ..tools.hdf5_io import Hdf5Exportable, ATTR_FORMAT
 
 __all__ = [
     'Model', 'NearestNeighborModel', 'MPOModel', 'CouplingModel', 'MultiCouplingModel',
@@ -90,10 +90,75 @@ class Model(Hdf5Exportable):
             if self.lat is not lattice:  # expect the *same instance*!
                 raise ValueError("Model.__init__() called with different lattice instances.")
 
+    @property
+    def rng(self):
+        """Reproducible numpy pseudo random number generator.
+
+        If you want to add randomness/disorder to your model,
+        it is recommended use this random number generator for reproducibility of the model::
+
+            self.rng.random(size=[3, 5])
+
+        Especially for models with time-dependence, you can/will otherwise end up generating a new
+        disordered at each time-step!
+
+        Options
+        -------
+        .. cfg:configoptions :: CouplingMPOModel
+
+            random_seed :: None | int
+                Defaults to 123456789. Seed for numpy pseudo random number generator which can
+                be used as e.g. ``self.rng.random(...)``.
+
+        """
+        rng = getattr(self, "_rng", None)
+        if rng is None:
+            seed = getattr(self, 'options', {}).get('random_seed', 123456789)
+            self._rng = rng = np.random.default_rng(seed=seed)
+        return rng
+
     def copy(self):
         """Shallow copy of self."""
         cp = copy.copy(self)
+        if hasattr(self, '_rng'):
+            cp._rng = copy.deepcopy(self._rng)
         return cp
+
+    def save_hdf5(self, hdf5_saver, h5gr, subpath):
+        """Export `self` into a HDF5 file.
+
+        Same as :meth:`~tenpy.tools.hdf5_io.Hdf5Exportable.save_hdf5`, but handle :attr:`rng`.
+        """
+        if hasattr(self, "_rng"):
+            rng = self._rng
+            del self._rng
+            try:
+                self._rng_state = rng.bit_generator.state
+                super().save_hdf5(hdf5_saver, h5gr, subpath)
+            finally:
+                self._rng = rng
+                del self._rng_state
+        else:
+            super().save_hdf5(hdf5_saver, h5gr, subpath)
+
+    @classmethod
+    def from_hdf5(cls, hdf5_loader, h5gr, subpath):
+        """Load instance from a HDF5 file.
+
+        Same as :meth:`~tenpy.tools.hdf5_io.Hdf5Exportable.from_hdf5`, but handle :attr:`rng`.
+        """
+        obj = super().from_hdf5(hdf5_loader, h5gr, subpath)
+        if hasattr(obj, '_rng_state'):
+            rng_state = obj._rng_state
+            # reconstruct random number generator from pickle state
+            # Will fail for custom RNGs, but I hope nobody needs that.
+            # If you do, simpy remove the :attr:`from_hdf5` and :attr:`save_hdf5` methods
+            # alltogether, such that it falls back to pickle protocol (with a warning...)
+            rng = np.random.Generator(getattr(np.random, rng_state['bit_generator'])())
+            rng.__setstate__(rng_state)
+            obj._rng = rng #np.random.Generator(bg)
+            del obj._rng_state
+        return obj
 
     def extract_segment(self, first=0, last=None, enlarge=None):
         """Return a (shallow) copy with extracted segment of MPS.
@@ -756,6 +821,8 @@ class CouplingModel(Model):
         if category is None:
             category = "local " + " ".join([op for op, i in term])
         sites = self.lat.mps_sites()
+        term, sign = order_combine_term(term, sites)
+        strength = strength * sign
         N = len(sites)
         if len(term) == 1:
             ot = self.onsite_terms.setdefault(category, OnsiteTerms(N))
@@ -779,7 +846,8 @@ class CouplingModel(Model):
         else:
             raise ValueError("empty term!")
         if plus_hc:
-            hc_term = [(sites[i % N].get_hc_op_name(op), i) for op, i in reversed(term)]
+            hc_term = [(sites[i % N].get_hc_op_name(op), self.lat.mps2lat_idx(i))
+                       for op, i in reversed(term)]
             self.add_local_term(np.conj(strength), hc_term, category, plus_hc=False)
 
     def add_onsite(self, strength, u, opname, category=None, plus_hc=False):
@@ -914,6 +982,8 @@ class CouplingModel(Model):
         strength : scalar | array
             Prefactor of the coupling. May vary spatially (see above). If an array of smaller size
             is provided, it gets tiled to the required shape.
+            A single scalar number can be given to indicate a coupling which is uniform accross
+            the lattice.
         u1 : int
             Picks the site ``lat.unit_cell[u1]`` for OP1.
         op1 : str

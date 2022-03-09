@@ -23,6 +23,14 @@ Added
 - :class:`tenpy.linalg.lanczos.Arnoldi` (and common base class :class:`~tenpy.linalg.lanczos.KrylovBased` with :class:`~tenpy.linalg.lanczos.LanczosGroundState`).
 - Allow to pass and merge multiple parameter files to ``tenpy-run`` from the command line.
 - Greatly expanded userguide on :doc:`/intro/simulations` and added more parameter examples.
+- Option `preserve_norm` for :class:`~tenpy.algorithms.mpo_evolution.ExpMPOEvolution`.
+- Allow non-trivial :attr:`~tenpy.models.lattice.Lattice.position_disorder` for lattices.
+- Option `fix_u` for :func:`~tenpy.simulations.measurement.onsite_expectation_value`.
+- Lattice :attr:`~tenpy.models.lattice.Lattice.cylinder_axis`.
+- Random number generator :attr:`~tenpy.models.model.Model.rng` for models.
+- :meth:`~tenpy.models.aklt.AKLTChain.psi_AKLT` for the exact MPS ground state of (spin-1/2) AKLT chain.
+- :func:`~tenpy.simulations.simulation.init_simulation` and :func:`~tenpy.simulations.simulation.init_simulation_from_checkpoint` for debugging or post-simulation measurement.
+- :func:`~tenpy.linalg.np_conserved.orthogonal_columns` constructing orthogonal columns to a given (rectangular) matrix.
 
 Changed
 ^^^^^^^
@@ -31,6 +39,8 @@ Changed
 - Automatically shift terms in :meth:`~tenpy.networks.mps.MPS.expectation_value_terms_sum` to start in the MPS unit cell for infinite MPS.
 - Possible ordering='folded' for the :class:`~tenpy.models.lattice.Ladder`.
 - Enhanced implementation of :meth:`~tenpy.networks.mps.MPS.canonical_form_infinite2` to replace :meth:`~tenpy.networks.mps.MPS.canonical_form_infinite`.
+- Split up :meth:`tenpy.networks.mpo.MPO.expectation_value` into :meth:`~tenpy.networks.mpo.MPO.expectation_value_finite`
+  and :meth:`~tenpy.networks.mpo.MPO.expectation_value_power` and add :meth:`tenpy.networks.mpo.MPO.expectation_value_TM`
 
 Fixed
 ^^^^^
@@ -38,6 +48,12 @@ Fixed
 - Make :func:`~tenpy.linalg.np_conserved.detect_qtotal` more stable: use the maximal entry instead of the first non-zero one.
 - :issue:`148` that generating MPOs with long-range couplings over multiple MPS unit cells and multi-couplings raised errors.
 - The :func:`~tenpy.linalg.np_conserved.qr` decomposition with ``mode='complete'`` sometimes returned wrong charges.
+  Moreover, it sometimes gave zero columns in Q if the R part was completely zero for that charge block.
 - Adjust default `trunc_params` of :func:`~tenpy.networks.mps.MPS.compute_K` and :func:`~tenpy.networks.mps.MPS.permute_sites` to avoid too severe truncation.
 - :issue:`153` that DMRG energy convergence criterium was verified after an arbitrarily large energy increase.
 - (!) Non-trivial `start_time` parameter caused wrong evolution in :class:`~tenpy.algorithms.mpo_evolution.TimeDependentExpMPOEvolution`.
+- Make sure that :meth:`~tenpy.models.lattice.lat2mps_idx` doesn't modify arguments in place.
+- The power-method :meth:`tenpy.networks.mpo.MPO.expectation_value` did not work correctly for ``H.L != psi.L``.
+- :meth:`~tenpy.models.model.CouplingModel.add_local_term` did not work with `plus_hc=True`.
+- :meth:`~tenpy.linalg.sparse.FlatLinearOperator.eigenvectors` did not always return orthogonal eigenvectors with well-defined charges.
+- Make ``cons_Sz='parity'`` for the :class:`~tenpy.networks.site.SpinHalfSite` non-trivial.
