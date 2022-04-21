@@ -2613,6 +2613,7 @@ class MPS:
         axes = [['vL*'] + self._get_p_label('*'), ['vR*'] + self._p_label]
         result = []
         for j in j_R:
+            ops_R, _, has_extra_JW = self._term_to_ops_list(term_R, autoJW, j)
             j = j + j_min  # start ops_R on site `j`
             assert i <= j
             for k in range(i, j):
