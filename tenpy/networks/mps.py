@@ -82,6 +82,7 @@ import numpy as np
 import warnings
 import random
 from functools import reduce
+from more_itertools import zip_offset
 import logging
 logger = logging.getLogger(__name__)
 
@@ -2678,6 +2679,38 @@ class MPS:
             CL = self._corr_ops_LP(ops_L, i + i_min)
             result.append(npc.inner(CL, CR, axes=[['vR', 'vR*'], ['vL', 'vL*']]))
         return np.real_if_close(result)
+
+    def correlation_function_multi_site(self, ops_L, ops_R, hermitian=False):
+        # TODO: does not handle op strings (e.g. JW)
+        ops_LR = ops_L, ops_R
+        len_L, len_R = map(len, ops_LR)
+        term_LR = [[(o, i) for i, o in enumerate(ops)] for ops in ops_LR]
+        c_ij = np.ma.masked_all(self.L - np.array((len_L, len_R)) + 1, dtype=complex)
+
+        # overlapping part, expectation_value_multi_sites
+        for i in range(self.L - len_L + 1):
+            for j in range(
+                    max(i if hermitian else 0, i - len_R + 1),
+                    min(i + len_L, self.L - len_R + 1),
+            ):
+                offset = (0, i - j) if j > i else (j - i, 0)
+                ops = zip_offset(*ops_LR, offsets=offset, longest=True, fillvalue="Id")
+                ops = list(map(" ".join, ops))
+                c_ij[i, j] = self.expectation_value_multi_sites(ops, min(i, j))
+
+        # non-overlapping part, via term_correlation_function_right
+        def _compute_triu(corr, terms):
+            corr = corr[:, len(terms[0]):]
+            for i in range(self.L - sum(map(len, terms)) + 1):
+                corr[i, i:] = self.term_correlation_function_right(*terms, i_L=i, autoJW=False)
+
+        _compute_triu(c_ij, term_LR)  # upper triangle
+        if hermitian:
+            tril = np.tril_indices_from(c_ij, -1)
+            c_ij[tril] = c_ij.transpose().conjugate()[tril]
+        else:
+            _compute_triu(c_ij.T, term_LR[::-1])  # lower triangle
+        return c_ij
 
     def term_list_correlation_function_right(self,
                                              term_list_L,
