@@ -818,6 +818,7 @@ class DMRGEngine(Sweep):
         max_sweeps = options.get('max_sweeps', 1000)
         max_E_err = options.get('max_E_err', 1.e-8)
         max_S_err = options.get('max_S_err', 1.e-5)
+        min_E_err = -max_E_err if options.get('abs_E_err', True) else -np.inf
         max_seconds = 3600 * options.get('max_hours', 24 * 365)
         if not self.finite:
             update_env = options.get('update_env', N_sweeps_check // 2)
@@ -833,7 +834,7 @@ class DMRGEngine(Sweep):
             # check convergence criteria
             if self.sweeps >= max_sweeps:
                 break
-            if (self.sweeps > min_sweeps and abs(Delta_E / max(E, 1.)) < max_E_err
+            if (self.sweeps > min_sweeps and min_E_err < -Delta_E / max(abs(E), 1.) < max_E_err
                     and abs(Delta_S) < max_S_err):
                 if self.mixer is None:
                     break
