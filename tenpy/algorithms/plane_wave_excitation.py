@@ -240,7 +240,7 @@ class PlaneWaveExcitationEngine(Algorithm):
             strange.append(npc.norm(temp))
         logger.info("Norm of H|psi> projected into the tangent space on each site: %r.", strange)
 
-    def run(self, p, qtotal_change=None, orthogonal_to=[], E_boosts=[], num_ev=1):
+    def run(self, p, guess=None, qtotal_change=None, orthogonal_to=[], E_boosts=[], num_ev=1):
         """ Run the plane-wave algorithm to find excited states of the given model.
 
         Parameters
@@ -275,7 +275,7 @@ class PlaneWaveExcitationEngine(Algorithm):
         self.unaligned_H = self.Unaligned_Effective_H(self, p)
         effective_H = SumNpcLinearOperator(self.aligned_H, self.unaligned_H)
         lanczos_params = self.options.subconfig('lanczos_params')
-        X_init = self.initial_guess(qtotal_change)
+        X_init = guess or self.initial_guess(qtotal_change)
         if len(E_boosts) != len(orthogonal_to):
             E_boost = self.options.get('E_boost', 100, 'real')
             E_boosts = [E_boost] * len(orthogonal_to)
