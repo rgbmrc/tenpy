@@ -4028,6 +4028,8 @@ class MPS(BaseMPSExpectationValue):
                                        cutoff=cutoff,
                                        qtotal_LR=[M.qtotal, None],
                                        inner_labels=['vR', 'vL'])
+            if not renormalize:
+                self.norm = self.norm * np.linalg.norm(S)
             S /= np.linalg.norm(S)
             self.set_SR(L - 1, S)
             M = U.scale_axis(S, 1).split_legs(0)
