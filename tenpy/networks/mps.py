@@ -6124,7 +6124,7 @@ class TransferMatrix(sparse.NpcLinearOperator):
 
         self._init_from_Ns_Ms(bra_N, ket_M, transpose, charge_sector, ket._p_label, not ket.finite)
 
-    def _init_from_Ns_Ms(self, bra_N, ket_M, transpose, charge_sector, p_label, infinite=True):
+    def _init_from_Ns_Ms(self, bra_N, ket_M, transpose, charge_sector, p_label, infinite):
         """Initialize directly from N and M.
 
         bra_N and ket_M are *not* reversed for transpose=False, i.e. ordered left to right.
@@ -6170,7 +6170,7 @@ class TransferMatrix(sparse.NpcLinearOperator):
                              "by a factor of " + str(enlarge_factors))
 
     @classmethod
-    def from_Ns_Ms(cls, bra_N, ket_M, transpose=False, charge_sector=0, p_label=['p']):
+    def from_Ns_Ms(cls, bra_N, ket_M, transpose=False, charge_sector=0, p_label=['p'], infinite=True):
         """Initialize a TransferMatrix directly from the MPS tensors.
 
         Parameters
@@ -6186,10 +6186,13 @@ class TransferMatrix(sparse.NpcLinearOperator):
             Defaults to ``0``, i.e., **assumes** the dominant eigenvector is in charge sector 0.
         p_label : list of str
             Physical label(s) of the tensors.
+        infinite : bool
+            Whether to check if self.qtotal != 0 leading to nilpotency or invalid eigenvectors.
+            Defaults to `True`.
         """
         self = cls.__new__(cls)
         self.shift_bra = self.shift_ket = 0
-        self._init_from_Ns_Ms(bra_N, ket_M, transpose, charge_sector, p_label)
+        self._init_from_Ns_Ms(bra_N, ket_M, transpose, charge_sector, p_label, infinite)
         return self
 
     @property
