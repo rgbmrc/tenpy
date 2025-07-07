@@ -4806,7 +4806,8 @@ def _svd_worker(a, full_matrices, compute_uv, overwrite_a, cutoff, qtotal_LR, in
         else:
             assert not full_matrices
     if len(S) == 0:
-        raise RuntimeError("SVD found no singular values")  # (at least none > cutoff)
+        warnings.warn("SVD found no singular values", stacklevel=2)  # (at least none > cutoff)
+        S = [[]]
     S = np.concatenate(S)
     if not compute_uv:
         return (None, S, None)
