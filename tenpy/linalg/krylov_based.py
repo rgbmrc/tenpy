@@ -368,6 +368,7 @@ class Arnoldi(KrylovBased):
             h[k + 1, k] = norm = npc.norm(w)
             self._calc_result_krylov(k)
             if norm < self._cutoff or (k + 1 >= self.N_min and self._converged(k)):
+                logger.info('%s finished after %d iterations', type(self).__name__, k)
                 break
         return k + 1
 
