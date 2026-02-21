@@ -7076,7 +7076,7 @@ class TransferMatrix(sparse.NpcLinearOperator):
 
     @classmethod
     def from_Ns_Ms(
-        cls, bra_N, ket_M, transpose=False, charge_sector=0, p_label=['p'], conjugate_Ns=True, unit_cell_width=None
+        cls, bra_N, ket_M, transpose=False, charge_sector=0, p_label=['p'], infinite=True, conjugate_Ns=True, unit_cell_width=None
     ):
         """Initialize a TransferMatrix directly from the MPS tensors.
 
@@ -7093,6 +7093,9 @@ class TransferMatrix(sparse.NpcLinearOperator):
             Defaults to ``0``, i.e., **assumes** the dominant eigenvector is in charge sector 0.
         p_label : list of str
             Physical label(s) of the tensors.
+        infinite : bool
+            Whether to check if self.qtotal != 0 leading to nilpotency or invalid eigenvectors.
+            Defaults to `True`.
         conjugate_Ns : bool
             If False, assumes that bra_N is already complex conjugated.
         unit_cell_width : int
@@ -7102,7 +7105,7 @@ class TransferMatrix(sparse.NpcLinearOperator):
         self = cls.__new__(cls)
         self.shift_bra = self.shift_ket = 0
         self._init_from_Ns_Ms(
-            bra_N, ket_M, transpose, charge_sector, p_label, conjugate_Ns=conjugate_Ns, unit_cell_width=unit_cell_width
+            bra_N, ket_M, transpose, charge_sector, p_label, infinite, conjugate_Ns=conjugate_Ns, unit_cell_width=unit_cell_width
         )
         return self
 
