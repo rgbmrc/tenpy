@@ -1770,6 +1770,7 @@ class Array:
             for ax in reversed(axes):
                 res.legs[ax : ax + 1] = self.legs[ax].legs
             res._set_shape()
+            res._qdata = np.empty((0, res.rank), dtype=np.intp)
         elif self.stored_blocks == 1 and all([(self.legs[ax].q_map.shape[0] == 1) for ax in axes]):
             # optimize: just a single block in each pipe
             res = self.copy(deep=True)

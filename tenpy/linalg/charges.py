@@ -1934,6 +1934,8 @@ def _find_row_differences(qflat):
         ``[0]+[i for i in range(1, len(qflat)) if np.any(qflat[i-1] != qflat[i])] + [len(qflat)]``
 
     """
+    if qflat.shape[0] == 0:
+        return np.array([0], dtype=np.intp)
     if qflat.shape[1] == 0:
         return np.array([0, qflat.shape[0]], dtype=np.intp)
     diff = np.ones(qflat.shape[0] + 1, dtype=np.bool_)

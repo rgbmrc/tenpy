@@ -646,6 +646,8 @@ cpdef np.ndarray _find_row_differences(np.ndarray qflat):
         The indices where rows change, including the first and last. Equivalent to:
         ``[0]+[i for i in range(1, len(qflat)) if np.any(qflat[i-1] != qflat[i])] + [len(qflat)]``
     """
+    if qflat.shape[0] == 0:
+        return np.array([0], dtype=np.intp)
     if qflat.shape[1] == 0:
         return np.array([0, qflat.shape[0]], dtype=np.intp)
     cdef int i, j, n=1, L = qflat.shape[0], M = qflat.shape[1]
