@@ -267,6 +267,8 @@ def test_npc_Array_itemacces():
 
 def test_npc_Array_reshape():
     a = random_Array((20, 15, 10), chinfo, sort=False)
+    # a *= 0
+    # a.ipurge_zeros()
     aflat = a.to_ndarray()
     for comb_legs, transpose in [
         ([[1]], [0, 1, 2]),
