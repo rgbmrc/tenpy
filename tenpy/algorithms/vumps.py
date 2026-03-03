@@ -224,9 +224,6 @@ class VUMPSEngine(IterativeSweeps):
             E_old = self.sweep_stats['E'][-1]
             S_old = self.sweep_stats['S'][-1]
 
-        # VUMPS specific convergence criteria
-        diagonal_gauge_frequency = options.get('diagonal_gauge_frequency', 0, int)
-
         # perform sweeps
         logger.info('Running sweep with optimization')
         for i in range(self.N_sweeps_check):
@@ -348,6 +345,7 @@ class VUMPSEngine(IterativeSweeps):
         """
         super().post_run_cleanup()
         check_overlap = self.options.get('check_overlap', True, bool)
+        cutoff = self.options.get('cutoff', 0.0)
         norm_tol = self.options.get('norm_tol', 1.0e-10, 'real')
 
         self.psi.test_validity()
@@ -366,7 +364,7 @@ class VUMPSEngine(IterativeSweeps):
             self.tangent_projector_test(self.guess_init_env_data)
             E = (Es[0] + Es[1]) / 2
 
-        return E, self.psi.to_MPS(check_overlap=check_overlap)
+        return E, self.psi.to_MPS(cutoff=cutoff, check_overlap=check_overlap)
 
     def mixer_cleanup(self):
         """For uniform MPS there is no need to clean up after the mixer."""
