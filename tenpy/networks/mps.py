@@ -231,8 +231,10 @@ class MPSGeometry:
     def test_sanity(self):
         if self.bc not in self._valid_bc:
             raise ValueError('invalid boundary condition: ' + repr(self.bc))
-        if not (isinstance(self.unit_cell_width, int) and self.unit_cell_width > 0):
+        int_unit_cell_width = int(self.unit_cell_width)
+        if not (int_unit_cell_width == self.unit_cell_width and self.unit_cell_width > 0):
             raise ValueError(f'invalid unit_cell_width: {self.unit_cell_width}')
+        self.unit_cell_width = int_unit_cell_width
         for i, site in enumerate(self.sites):
             if site.leg.chinfo != self.chinfo:
                 raise ValueError(f'Invalid ChargeInfo for site {i}.')
