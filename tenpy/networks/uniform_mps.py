@@ -297,12 +297,17 @@ class UniformMPS(MPS):
                 self.sites, self._AL, self._S, bc='infinite', form='A', norm=1.0, unit_cell_width=self.unit_cell_width
             )
             MPS_A.canonical_form()  # [TODO] should we do this? It might be expensive.
-            overlap_AB = np.abs(MPS_B.overlap(MPS_A, understood_infinite=True))
-            logger.info(
-                f'Overlap of UniformMPS constructed from ARs with UniformMPS constructed with ALs: {overlap_AB:.10f}'
-            )
-            if not np.isclose(overlap_AB, 1):
-                logger.warning(f'overlap not close to 1: {overlap_AB:.10f}.')
+            overlap_AB_err = np.abs(MPS_B.overlap(MPS_A, understood_infinite=True)) - 1
+            if not np.isclose(overlap_AB_err, 0, atol=1e-12):
+                logger.warning(
+                    'UniformMPS constructed from ARs and ALs not close. Overlap: 1%+g',
+                    overlap_AB_err,
+                )
+            else:
+                logger.debug(
+                    'Overlap of UniformMPS constructed from ARs and ALs: 1%+g',
+                    overlap_AB_err,
+                )
         return MPS_B
 
     def to_diagonal_gauge(self, cutoff=1.0e-16, check_overlap=False):
@@ -323,7 +328,7 @@ class UniformMPS(MPS):
 
         if self.L > 1 and cutoff > 0.0:
             logger.warning(
-                "'sv_cutoff' cannot be non-zero for multi-site unit cell as this messes with the transfer matrix."
+                "'cutoff' cannot be non-zero for multi-site unit cell as this messes with the transfer matrix."
             )
             cutoff = 0.0
 
@@ -343,8 +348,8 @@ class UniformMPS(MPS):
         self.diagonal_gauge = True
 
         if check_overlap:
-            overlap = self.overlap(old_uMPS, understood_infinite=True)
-            logger.info(f'Overlap of original UniformMPS with diagonal UniformMPS: {overlap:.10f}')
+            overlap = abs(self.overlap(old_uMPS, understood_infinite=True))
+            logger.info('Overlap of original and diagonal UniformMPS: 1%+g', overlap - 1)
 
     def _diagonal_gauge_C(self, theta, i0, cutoff):
         """Diagonalize bond matrix theta and update ALs and ARs on sites on the boundary of the bond."""
