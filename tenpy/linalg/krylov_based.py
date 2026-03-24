@@ -341,7 +341,7 @@ class Arnoldi(KrylovBased):
         super().__init__(H, psi0, options)
         self.E_tol = self.options.get('E_tol', np.inf, 'real')
         self.which = self.options.get('which', 'LM', str)
-        self.num_ev = self.options.get('num_ev', 1, int)  # number of desired eigenvectors
+        self.num_ev = self.options.get('num_ev', 1, 'integer')  # number of desired eigenvectors
 
     def run(self):
         """Find the ground state of self.H.

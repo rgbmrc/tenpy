@@ -203,8 +203,11 @@ class UniformMPS(MPS):
                 (C1AR / npc.tensordot(C1AR, AC.conj(), axes=(['vL', 'p', 'vR'], ['vL*', 'p*', 'vR*']))) - AC
             )
 
-        self.valid_umps = np.max(err) < cutoff
-        logger.info(f'UniformMPS is {"valid" if self.valid_umps else "invalid"} with max error {np.max(err):.5f}.')
+        max_err = np.max(err)
+        self.valid_umps = max_err < cutoff
+        valid = "valid" if self.valid_umps else "invalid"
+        level = logging.DEBUG if self.valid_umps else logging.WARNING
+        logger.log(level, 'UniformMPS is %s with max error %d', valid, max_err)
         return err
 
     def copy(self):
@@ -291,12 +294,12 @@ class UniformMPS(MPS):
             self.sites, self._AR, self._S, bc='infinite', form='B', norm=1.0, unit_cell_width=self.unit_cell_width
         )
 
-        MPS_B.canonical_form()
+        # MPS_B.canonical_form()
         if check_overlap:
             MPS_A = MPS(
                 self.sites, self._AL, self._S, bc='infinite', form='A', norm=1.0, unit_cell_width=self.unit_cell_width
             )
-            MPS_A.canonical_form()  # [TODO] should we do this? It might be expensive.
+            # MPS_A.canonical_form()  # [TODO] should we do this? It might be expensive.
             overlap_AB_err = np.abs(MPS_B.overlap(MPS_A, understood_infinite=True)) - 1
             if not np.isclose(overlap_AB_err, 0, atol=1e-12):
                 logger.warning(
@@ -328,7 +331,7 @@ class UniformMPS(MPS):
 
         if self.L > 1 and cutoff > 0.0:
             logger.warning(
-                "'cutoff' cannot be non-zero for multi-site unit cell as this messes with the transfer matrix."
+                "'cutoff' cannot be non-zero for multi-site unit cell as this messes with the transfer matrix"
             )
             cutoff = 0.0
 

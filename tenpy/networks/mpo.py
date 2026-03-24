@@ -3604,7 +3604,7 @@ class MPOEnvironmentBuilder:
             S = self.ket.get_SR(self.L - 1) if name == 'init_LP' else self.ket.get_SL(0)
             if isinstance(S, npc.Array):
                 rho = npc.tensordot(S, S.conj(), axes=['vR', 'vR*'] if name == 'init_LP' else ['vL', 'vL*'])
-                rho.iset_leg_labels(legs_labels[name][1][1:])
+                rho.iset_leg_labels(legs_labels[name][1][-1:-3:-1])
             else:
                 rho = npc.diag(S**2, legs_labels[name][0][1].conj(), labels=legs_labels[name][1][-1:-3:-1])
             return c0, rho

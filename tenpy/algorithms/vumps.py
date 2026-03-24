@@ -351,20 +351,21 @@ class VUMPSEngine(IterativeSweeps):
         self.psi.test_validity()
         logger.info(f'{self.__class__.__name__} finished after {self.sweeps} sweeps, max chi={max(self.psi.chi)}')
 
+        mps_psi = self.psi.to_MPS(cutoff=cutoff, check_overlap=check_overlap)
         norm_err = np.linalg.norm(self.psi.norm_test())
         if norm_err > norm_tol:
             logger.warning(
                 'final VUMPS state not in canonical form up to norm_tol=%.2e: norm_err=%.2e', norm_tol, norm_err
             )
-            E = self.sweep_stats['E'][-1]
-        else:
-            self.guess_init_env_data, Es, _ = MPOTransferMatrix.find_init_LP_RP(
-                self.model.H_MPO, self.psi, calc_E=True, guess_init_env_data=self.guess_init_env_data
-            )
-            self.tangent_projector_test(self.guess_init_env_data)
-            E = (Es[0] + Es[1]) / 2
+            mps_psi.canonical_form_infinite1()
+            self.psi = UniformMPS.from_MPS(mps_psi)
+        self.guess_init_env_data, Es, _ = MPOTransferMatrix.find_init_LP_RP(
+            self.model.H_MPO, self.psi, calc_E=True, guess_init_env_data=self.guess_init_env_data
+        )
+        self.tangent_projector_test(self.guess_init_env_data)
+        E = (Es[0] + Es[1]) / 2
 
-        return E, self.psi.to_MPS(cutoff=cutoff, check_overlap=check_overlap)
+        return E, mps_psi
 
     def mixer_cleanup(self):
         """For uniform MPS there is no need to clean up after the mixer."""
@@ -520,8 +521,8 @@ class VUMPSEngine(IterativeSweeps):
         ARs = self.psi._AR
         ACs = self.psi._AC
         Ws = self.model.H_MPO._W * int(self.psi.L / self.model.H_MPO.L)
-        strange_left = []
-        strange_right = []
+        strange_left = np.zeros(self.psi.L)
+        strange_right = np.zeros(self.psi.L)
         for i in range(self.psi.L):
             temp_L = append_left_env(ALs[:i], ALs[:i], LW, Ws=Ws[:i])
             temp_R = append_right_env(ARs[i + 1 :], ARs[i + 1 :], RW, Ws=Ws[i + 1 :])
@@ -532,9 +533,9 @@ class VUMPSEngine(IterativeSweeps):
             temp_VR = append_right_env([VRs[i]], [ACs[i]], temp_R, Ws=[Ws[i]])
             temp_VR = npc.tensordot(temp_L, temp_VR, axes=(['wR', 'vR*'], ['wL', 'vL*']))
 
-            strange_left.append(npc.norm(temp_VL))
-            strange_right.append(npc.norm(temp_VR))
-        logger.info(f'Strange cancellation left: {strange_left}, right: {strange_right}.')
+            strange_left[i] = npc.norm(temp_VL)
+            strange_right[i] = npc.norm(temp_VR)
+        logger.info('Strange cancellation\n left: %s\nright: %s', strange_left, strange_right)
 
         return strange_left, strange_right
 

@@ -237,14 +237,14 @@ class PlaneWaveExcitationEngine(Algorithm):
 
         self.aligned_H = self.Aligned_Effective_H(self)
 
-        strange = []
+        strange = np.zeros(self.L)
         for i in range(self.L):
             temp_L = self.GS_env.get_LP(i)
             temp_R = self.GS_env.get_RP(i)
             temp = append_left_env([self.VLs[i]], [self.ACs[i]], temp_L, Ws=[self.Ws[i]])
             temp = npc.tensordot(temp, temp_R, axes=(['wR', 'vR*'], ['wL', 'vL*']))
-            strange.append(npc.norm(temp))
-        logger.info('Norm of H|psi> projected into the tangent space on each site: %r.', strange)
+            strange[i] = npc.norm(temp)
+        logger.info('Norm of H|psi> projected into the tangent space on each site: %s', strange)
 
     def run(self, p, qtotal_change=None, orthogonal_to=[], E_boosts=[], num_ev=1):
         """Run the plane-wave algorithm to find excited states of the given model.
@@ -643,7 +643,7 @@ class PlaneWaveExcitationEngine(Algorithm):
             )
 
             if np.isclose(npc.norm(th0), 0):
-                logger.warn('Initial guess for an X is zero; charges not be allowed on site %d.', i)
+                logger.warning('Initial guess for an X is zero; charges not allowed on site %d', i)
             else:
                 valid_charge = True
                 LP = self.GS_env_L.get_LP(i, store=True)
@@ -658,8 +658,9 @@ class PlaneWaveExcitationEngine(Algorithm):
                 _, th0, _ = LanczosGroundState(H0, th0, lanczos_params).run()
 
             X_init.append(th0)
-
-        logger.info('Norms of the initial guess: %r.', [npc.norm(x) for x in X_init])
+        norms = np.array([npc.norm(x) for x in X_init])
+        level = logging.WARNING if any(abs(norms - 1) > 1e-10) else logging.DEBUG
+        logger.log(level, 'Norms of the initial guess: %s', norms)
         assert valid_charge, 'No X is non-zero; charge is not valid for gluing.'
         return X_init
 
@@ -757,14 +758,14 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             self.lambda_C1 = npc.tensordot(self.LW, self.lambda_C1, axes=(['wR', 'vR'], ['wL', 'vL']))
             self.lambda_C1 = npc.tensordot(self.lambda_C1, C0_L.conj(), axes=(['vR*', 'vL*'], ['vL*', 'vR*'])) / norm
 
-        strange = []
+        strange = np.zeros(self.L)
         for i in range(self.L):
             temp_L = self.GS_env.get_LP(i)
             temp_R = self.GS_env.get_RP(i)
             temp = append_left_env([self.VLs[i]], [self.ACs[i]], temp_L, Ws=[self.Ws[i]])
             temp = npc.tensordot(temp, temp_R, axes=(['wR', 'vR*'], ['wL', 'vL*']))
-            strange.append(npc.norm(temp))
-        logger.info('Norm of H|psi> projected into the tangent space on each site: %r.', strange)
+            strange[i] = npc.norm(temp)
+        logger.info('Norm of H|psi> projected into the tangent space on each site: %s', strange)
 
     def run(self, p, qtotal_change=None, orthogonal_to=[], E_boosts=[], num_ev=1):
         """Run the plane-wave algorithm to find excited states of the given model.
@@ -1332,13 +1333,13 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             if self.size > 1:
                 th0 = th0.split_legs()
             if np.isclose(npc.norm(th0), 0):
-                logger.warn('Initial guess for an X is zero; charges not be allowed on site %d.', i)
+                logger.warn('Initial guess for an X is zero; charges not be allowed on site %d', i)
             else:
                 valid_charge = True
                 th0 /= npc.norm(th0)
 
             X_init.append(th0)
 
-        logger.info('Norms of the initial guess: %r.', [npc.norm(x) for x in X_init])
-        assert valid_charge, 'No X is non-zero; charge is not valid for gluing.'
+        logger.info('Norms of the initial guess: %s', [npc.norm(x) for x in X_init])
+        assert valid_charge, 'No X is non-zero; charge is not valid for gluing'
         return X_init

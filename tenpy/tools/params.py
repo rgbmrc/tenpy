@@ -269,6 +269,7 @@ class Config(MutableMapping):
 
                 'real': ``numbers.Real``
                 'complex': ``numbers.Complex``
+                'integer`: ``numbers.Integral``
                 'array': ``[list, numpy.ndarray]``
                 'real_or_array`: ``[numbers.Real, list, numpy.ndarray]``
                 'complex_or_array`: ``[numbers.Complex, list, numpy.ndarray]``
@@ -289,6 +290,8 @@ class Config(MutableMapping):
                 expect_type = [numbers.Real]
             if expect_type == 'complex':
                 expect_type = [numbers.Complex]
+            if expect_type == 'integer':
+                expect_type = [numbers.Integral]
             if expect_type == 'array':
                 expect_type = [list, np.ndarray]
             if expect_type == 'real_or_array':

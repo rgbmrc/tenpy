@@ -5,6 +5,7 @@ try:
     from Cython.Build import cythonize
 except (ImportError, AttributeError):
     cythonize = None
+# cythonize = None  # DEL debugging
 
 import os
 
