@@ -4786,7 +4786,13 @@ class MPS(BaseMPSExpectationValue):
         # note: we included SVD on i=0; else the virtual leg (-1, 0) might not even be sorted
         U = self.shift_Array_unit_cells(U, 1)
         self._B[-1] = npc.tensordot(self._B[-1], U, axes=['vR', 'vL'])
-
+        # HACK this unsorts legs! patch here
+        for u in range(self.L):
+            B = self.get_B(u).transpose(("vL", "p", "vR"))  # should not be needed
+            perm, B_new = B.sort_legcharge()
+            self.set_B(u, B_new)
+            self.set_SL(u, self.get_SL(u)[perm[0]])
+        
     def _canonical_form_left_orthogonalize(self, L, tol, arnoldi_params):
         max_iters = 10_000
         for _ in range(max_iters):

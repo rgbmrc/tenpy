@@ -897,13 +897,13 @@ class IterativeSweeps(Sweep):
         max_sweeps = self.options.get('max_sweeps', 1000, int)
         max_seconds = 3600 * self.options.get('max_hours', 24 * 365, 'real')
 
-        if self.sweeps > max_sweeps:
+        if self.sweeps >= max_sweeps:
             if self.is_converged():
                 logger.info(f'{self.__class__.__name__}: Converged.')
             else:
                 logger.info(f'{self.__class__.__name__}: Maximum number of sweeps reached')
             return True
-        if self.sweeps > min_sweeps and self.is_converged():
+        if self.sweeps >= min_sweeps and self.is_converged():
             if self.mixer is None:
                 return True
             else:

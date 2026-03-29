@@ -4308,7 +4308,7 @@ def orthogonal_columns(a, new_label=None):
     Parameters
     ----------
     a : :class:`Array`
-        A square matrix to be exponentiated, shape ``(M,N)`` with N <= M.
+        Matrix whose columns are orthogonally completed, shape ``(M,N)`` with N <= M.
     new_label : None | str
         New right label for the returned `ortho`. ``None`` defaults to the right label of `A`.
 
@@ -4316,7 +4316,7 @@ def orthogonal_columns(a, new_label=None):
     -------
     ortho : :class:`Array`
         Isometry in the sense ``ortho^dagger @ orhto == eye``, i.e. has orthonormal columns.
-        Further, all columns are orthonormal to the columns of `a`.
+        Further, all columns are orthogonal to the columns of `a`.
 
     """
     if a.rank != 2:

@@ -1105,6 +1105,7 @@ def set_common_charges(sites, new_charges='same', new_names=None, new_mod=None, 
             perm_flat = leg_unsorted.perm_flat_from_perm_qind(perm_qind)
             perms.append(perm_flat)
         else:
+            leg = leg_unsorted
             perm_flat = None
         site.change_charge(leg, perm_flat)
         if new_charge_to_JW_parity is not None:

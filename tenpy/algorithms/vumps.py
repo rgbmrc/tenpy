@@ -355,10 +355,15 @@ class VUMPSEngine(IterativeSweeps):
         norm_err = np.linalg.norm(self.psi.norm_test())
         if norm_err > norm_tol:
             logger.warning(
-                'final VUMPS state not in canonical form up to norm_tol=%.2e: norm_err=%.2e', norm_tol, norm_err
+                    'final DMRG state not in canonical form up to '
+                    'norm_tol=%.2e: norm_err=%.2e, '
+                    'calling psi.canonical_form_infinite2()',
+                norm_tol,
+                norm_err,
             )
-            mps_psi.canonical_form_infinite1()
+            mps_psi.canonical_form_infinite2()
             self.psi = UniformMPS.from_MPS(mps_psi)
+            self.guess_init_env_data = None  # recompute, chi might have changed
         self.guess_init_env_data, Es, _ = MPOTransferMatrix.find_init_LP_RP(
             self.model.H_MPO, self.psi, calc_E=True, guess_init_env_data=self.guess_init_env_data
         )
