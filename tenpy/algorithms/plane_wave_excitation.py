@@ -189,7 +189,7 @@ class PlaneWaveExcitationEngine(Algorithm):
 
     """
 
-    def __init__(self, psi, model, options, **kwargs):
+    def __init__(self, psi, model, options, VLs=None, **kwargs):
         super().__init__(psi, model, options, **kwargs)
 
         assert self.psi.L == self.model.H_MPO.L
@@ -213,7 +213,9 @@ class PlaneWaveExcitationEngine(Algorithm):
         # Construct VL, needed to parametrize - B - as - VL - X -
         #                                       |        |
         # Use prescription under Eq. 85 in Tangent Space lecture notes.
-        self.VLs = [construct_orthogonal(self.ALs[i]) for i in range(self.L)]
+        if VLs is None: 
+            VLs = [construct_orthogonal(self.ALs[i]) for i in range(self.L)]
+        self.VLs = VLs 
 
         # Get left and right generalized eigenvalues
         self.boundary_env_data, self.energy_density, _ = MPOTransferMatrix.find_init_LP_RP(
