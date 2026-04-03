@@ -71,7 +71,7 @@ def append_right_env(As, Bs, R, Ws=None):
         The new environment with the tensors above included.
 
     """
-    temp = R.copy()
+    temp = R
     for i in reversed(range(len(As))):
         temp = npc.tensordot(Bs[i].conj(), temp, axes=(['vR*'], ['vL*']))
         if Ws is not None:
@@ -103,7 +103,7 @@ def append_left_env(As, Bs, L, Ws=None):
         The new environment with the tensors above included.
 
     """
-    temp = L.copy()
+    temp = L
     for i in range(len(As)):
         temp = npc.tensordot(temp, Bs[i].conj(), axes=(['vR*'], ['vL*']))
         if Ws is not None:
@@ -139,11 +139,11 @@ def construct_orthogonal(M, left=True):
 
     """
     if left:
-        M = M.copy().combine_legs([['vL', 'p'], ['vR']], qconj=[+1, -1])
+        M = M.combine_legs([['vL', 'p'], ['vR']], qconj=[+1, -1])
         Q = npc.orthogonal_columns(M, 'vR')
         assert npc.norm(npc.tensordot(Q, M.conj(), axes=(['(vL.p)'], ['(vL*.p*)']))) < 1.0e-12
     else:
-        M = M.copy().combine_legs([['vL'], ['p', 'vR']], qconj=[+1, -1])
+        M = M.combine_legs([['vL'], ['p', 'vR']], qconj=[+1, -1])
         Q = npc.orthogonal_columns(M.transpose(['(p.vR)', '(vL)']), 'vL').itranspose(['vL', '(p.vR)'])
         assert npc.norm(npc.tensordot(Q, M.conj(), axes=(['(p.vR)'], ['(p*.vR*)']))) < 1.0e-12
     return Q.split_legs()
