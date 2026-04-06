@@ -914,12 +914,12 @@ class LegCharge:
         """
         if charge is None:
             return cls.from_trivial(leg.ind_len, chargeinfo, leg.qconj)
+        if isinstance(charge, str):
+            charge = leg.chinfo.names.index(charge)
         chinfo = ChargeInfo.drop(leg.chinfo, charge)
         if chargeinfo is not None:
             assert chinfo == chargeinfo
             chinfo = chargeinfo
-        if isinstance(charge, str):
-            charge = chinfo.names.index(charge)
         return cls.from_qind(chinfo, leg.slices, np.delete(leg.charges, charge, 1), leg.qconj)
 
     @classmethod

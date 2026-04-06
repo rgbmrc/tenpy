@@ -1277,12 +1277,11 @@ class Array:
                     mask = np.zeros(leg.ind_len, np.bool_)
                     mask[sl] = True
                     leg_slices.append(leg.project(mask)[2])
-                qtotal = detect_qtotal(self.to_ndarray(), leg_slices)
+                qtotal = detect_qtotal(block, leg_slices)
                 break
             else:
                 raise ValueError("no non-zero entry: can't detect qtotal")
-        else:
-            qtotal = np.concatenate((self.qtotal, np.array(qtotal, dtype=QTYPE)))
+        qtotal = np.concatenate((self.qtotal, np.array(qtotal, dtype=QTYPE)))
         res = Array(legs, self.dtype, qtotal, self._labels)
         for block, slices, _, _ in self:  # use __iter__
             res[slices] = block  # use __setitem__
