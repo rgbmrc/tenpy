@@ -357,11 +357,11 @@ class VUMPSEngine(IterativeSweeps):
             logger.warning(
                     'final DMRG state not in canonical form up to '
                     'norm_tol=%.2e: norm_err=%.2e, '
-                    'calling psi.canonical_form_infinite2()',
+                    'calling psi.canonical_form_infinite1()',
                 norm_tol,
                 norm_err,
             )
-            mps_psi.canonical_form_infinite2()
+            mps_psi.canonical_form_infinite1()
             self.psi = UniformMPS.from_MPS(mps_psi)
             self.guess_init_env_data = None  # recompute, chi might have changed
         self.guess_init_env_data, Es, _ = MPOTransferMatrix.find_init_LP_RP(
