@@ -754,7 +754,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         self.GS_env = self.GS_env_L = self.GS_env_R = MPOEnvironment(
             self.psi, self.H, self.psi, **self.boundary_env_data
         )
-        self.lambda_C1 = options.get('lambda_C1', None, 'real')
+        self.lambda_C1 = self.options.get('lambda_C1', None, 'real')
         if self.lambda_C1 is None:
             C0_L = self.Cs[0]
             norm = npc.tensordot(C0_L, C0_L.conj(), axes=(['vL', 'vR'], ['vL*', 'vR*']))
