@@ -514,7 +514,8 @@ class Array:
         # have set all those entries that were read out to zero. Only zeros should remain
         if np.any(np.abs(data_flat) > cutoff):
             if raise_wrong_sector:
-                raise ValueError('wrong sector with non-zero entries')
+                qtotal_wrong = detect_qtotal(data_flat, legcharges, cutoff)
+                raise ValueError('wrong sector with non-zero entries', qtotal, qtotal_wrong)
             if warn_wrong_sector:
                 msg = 'flat array has non-zero entries in blocks incompatible with charge'
                 warnings.warn(msg, stacklevel=2)
