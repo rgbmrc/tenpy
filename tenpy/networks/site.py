@@ -470,11 +470,12 @@ class Site(Hdf5Exportable):
 
         Parameters
         ----------
-        name : str
+        name : str | :class:`~tenpy.linalg.np_conserved.Array`
             The name of the operator to be returned.
             In case of multiple operator names separated by whitespace,
             we multiply them together to a single on-site operator
             (with the one on the right acting first).
+            An npc Array is returned as is.
 
         Returns
         -------
@@ -483,6 +484,8 @@ class Site(Hdf5Exportable):
             If name already was an npc Array, it's directly returned.
 
         """
+        if isinstance(name, npc.Array):
+            return name
         names = name.split()
         op = getattr(self, names[0], None)
         if op is None:
