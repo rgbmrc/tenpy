@@ -5066,7 +5066,7 @@ def _eig_worker(hermitian, a, sort, UPLO='L'):
             rw = np.take(rw, perm)
             rv = np.take(rv, perm, axis=1)
         qi = qindices[0]  # both `a` and `resv` are sorted and share the same qindices
-        resv._data[qi] = rv  # replace identity block
+        resv._data[qi] = rv.astype(resv.dtype, copy=False)  # ensure dtype consistency
         resw[a.legs[0].get_slice(qi)] = rw  # replace eigenvalues
     if len(piped_axes) > 0:
         resv = resv.split_legs(0)  # the 'outer' facing leg is permuted back.
