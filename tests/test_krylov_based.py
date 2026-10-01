@@ -159,3 +159,32 @@ def test_arnoldi(n, which):
     ov = np.inner(psi0.to_ndarray().conj(), psi0_flat)
     print('|<psi0|psi0_flat>|=', abs(ov))
     assert abs(1.0 - abs(ov)) < tol
+
+
+def test_gmres(n=40, tol=1.0e-10):
+    # complex non-normal systems, sensitive to the complex Givens rotations and Arnoldi coefficients
+    leg = gen_random_legcharge(ch, n)
+    M = npc.Array.from_func_square(rmat.standard_normal_complex, leg)
+    b = npc.Array.from_func(rmat.standard_normal_complex, [leg], shape_kw='size')
+    x0 = npc.Array.zeros_like(b) * 1.0j
+    # one restart cycle of k iterations must reach the minimal residual over the Krylov space
+    A, k = npc.eye_like(M) * 3.0j + M, 10
+    Af, bf = A.to_ndarray(), b.to_ndarray()
+    K = np.linalg.qr(np.array([np.linalg.matrix_power(Af, j) @ bf for j in range(k)]).T)[0]
+    y = np.linalg.lstsq(Af @ K, bf, rcond=None)[0]
+    res_min = np.linalg.norm(Af @ K @ y - bf) / np.linalg.norm(bf)
+    opts = {'N_min': 0, 'N_max': k, 'restart': 1, 'res': 0.0}
+    x, res, errors, _ = krylov_based.GMRES(A, x0, b, opts).run()
+    assert abs(res / res_min - 1.0) < tol
+    assert abs(errors[0][-1] / res - 1.0) < tol  # estimated vs true residual
+    eng = krylov_based.GMRES(A, x0, b, opts)  # run() discards the basis on restart
+    for j in range(k):
+        eng.arnoldi(j)
+    Q = np.array([q.to_ndarray() for q in eng.qs])
+    assert np.linalg.norm(Q.conj() @ Q.T - np.eye(k + 1)) < tol
+    # restarted solve to convergence
+    A = npc.eye_like(M) - M * (0.99j / np.max(np.abs(np.linalg.eigvals(M.to_ndarray()))))
+    x, res, errors, _ = krylov_based.GMRES(A, x0, b, {'N_max': 10, 'restart': 50, 'res': 1.0e-12}).run()
+    x_flat = np.linalg.solve(A.to_ndarray(), bf)
+    assert res < 1.0e-12 and abs(errors[-1][-1] / res - 1.0) < 1.0e-2
+    assert np.linalg.norm(x.to_ndarray() - x_flat) / np.linalg.norm(x_flat) < tol

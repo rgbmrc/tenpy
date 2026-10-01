@@ -241,7 +241,7 @@ class GMRES:
                 self.arnoldi(k)
                 self.apply_givens_rotation(k)
                 self.e1[k + 1] = -self.sine[k] * self.e1[k]
-                self.e1[k] = self.cosine[k] * self.e1[k]
+                self.e1[k] = np.conj(self.cosine[k]) * self.e1[k]
                 # The residual is just the last element of $\beta$ vector (see Wikipedia) since $y$ is found exactly.
                 error = np.abs(self.e1[k + 1]) / self.b_norm
                 self.total_error[-1].append(error)
@@ -263,7 +263,7 @@ class GMRES:
         # Iterative build orthogonal Krylov subspace and $H$ matrix.
         q = self.A.matvec(self.qs[-1])
         for i in range(k + 1):
-            self.H[i, k] = npc.inner(q, self.qs[i], axes='range', do_conj=True)
+            self.H[i, k] = npc.inner(self.qs[i], q, axes='range', do_conj=True)
             q.iadd_prefactor_other(-self.H[i, k], self.qs[i])
         self.H[k + 1, k] = npc.norm(q)
         if self.H[k + 1, k] > 0:  # avoid warning if norm(q)==0, error=0 in that case
@@ -272,21 +272,23 @@ class GMRES:
 
     def apply_givens_rotation(self, k):
         # Apply rotation to $H$ so that it becomes upper triangular.
+        # The complex rotation is the unitary [[conj(c), conj(s)], [-s, c]].
+        c, s = self.cosine, self.sine
         for i in range(k):
-            temp = self.cosine[i] * self.H[i, k] + self.sine[i] * self.H[i + 1, k]
-            self.H[i + 1, k] = -self.sine[i] * self.H[i, k] + self.cosine[i] * self.H[i + 1, k]
+            temp = np.conj(c[i]) * self.H[i, k] + np.conj(s[i]) * self.H[i + 1, k]
+            self.H[i + 1, k] = -s[i] * self.H[i, k] + c[i] * self.H[i + 1, k]
             self.H[i, k] = temp
 
-        self.givens_rotation(k)
-        self.H[k, k] = self.cosine[k] * self.H[k, k] + self.sine[k] * self.H[k + 1, k]
+        self.H[k, k] = self.givens_rotation(k)
         self.H[k + 1, k] = 0
 
     def givens_rotation(self, k):
         # Find cosine and sine such that the element below the diagonal of kth column of $H$ is removed.
+        # Returns the resulting (real) diagonal element.
         v1, v2 = self.H[k, k], self.H[k + 1, k]
-        t = np.sqrt(v1**2 + v2**2)
-        self.cosine[k] = v1 / t
-        self.sine[k] = v2 / t
+        t = np.linalg.norm([v1, v2])
+        self.cosine[k], self.sine[k] = (v1 / t, v2 / t) if t > 0 else (1, 0)
+        return t
 
     def backsolve(self, k):
         # $H$ is now a diagonal matrix; backsolve to find $y$ exactly.
