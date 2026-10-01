@@ -188,3 +188,43 @@ def test_gmres(n=40, tol=1.0e-10):
     x_flat = np.linalg.solve(A.to_ndarray(), bf)
     assert res < 1.0e-12 and abs(errors[-1][-1] / res - 1.0) < 1.0e-2
     assert np.linalg.norm(x.to_ndarray() - x_flat) / np.linalg.norm(x_flat) < tol
+
+
+@pytest.mark.parametrize('factor', [1.0, 1.0j, 1.0 + 1.0j])
+@pytest.mark.parametrize('res_tol', [1.0e-8, 0.0])
+def test_gmres_exact_breakdown(factor, res_tol):
+    A = npc.Array.from_ndarray_trivial(factor * np.eye(2))
+    b = npc.Array.from_ndarray_trivial(np.array([1.0, 0.0], dtype=complex))
+    x, res, errors, iters = krylov_based.GMRES(A, npc.Array.zeros_like(b), b, {'res': res_tol}).run()
+    np.testing.assert_allclose(x.to_ndarray(), b.to_ndarray() / factor, atol=1.0e-15)
+    assert res < 1.0e-15
+    assert errors[-1][-1] == res
+    assert iters == [1]  # breakdown must override the default N_min, including for res=0
+
+
+def test_gmres_exact_breakdown_second_step():
+    A = npc.Array.from_ndarray_trivial(np.array([[0.0, 1.0j], [1.0, 0.0]]))
+    b = npc.Array.from_ndarray_trivial(np.array([1.0, 0.0], dtype=complex))
+    x, res, _, iters = krylov_based.GMRES(A, npc.Array.zeros_like(b), b, {}).run()
+    np.testing.assert_allclose(x.to_ndarray(), [0.0, -1.0j], atol=1.0e-15)
+    assert res < 1.0e-15
+    assert iters == [2]
+
+
+@pytest.mark.parametrize('matrix', [np.zeros((2, 2)), np.array([[0.0, 0.0], [1.0, 0.0]])])
+def test_gmres_singular_breakdown(matrix):
+    A = npc.Array.from_ndarray_trivial(matrix)
+    b = npc.Array.from_ndarray_trivial(np.array([1.0, 0.0], dtype=complex))
+    x, res, errors, iters = krylov_based.GMRES(A, npc.Array.zeros_like(b), b, {}).run()
+    np.testing.assert_allclose(x.to_ndarray(), [0.0, 0.0], atol=1.0e-15)
+    assert res == errors[-1][-1] == 1.0  # finite best iterate, but no solution exists
+    assert iters == [1 if not np.any(matrix) else 2]
+
+
+def test_gmres_exact_initial_guess():
+    A = npc.Array.from_ndarray_trivial(np.eye(2))
+    b = npc.Array.from_ndarray_trivial(np.array([1.0, 0.0], dtype=complex))
+    x, res, _, iters = krylov_based.GMRES(A, b, b, {'res': 0.0}).run()
+    np.testing.assert_array_equal(x.to_ndarray(), b.to_ndarray())
+    assert res == 0.0
+    assert iters == []

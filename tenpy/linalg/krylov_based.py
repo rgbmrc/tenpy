@@ -222,7 +222,8 @@ class GMRES:
         self.total_iters = []
         self.r_norm = npc.norm(self.rs[0])
         self.qs = [self.rs[0].copy()]
-        self.qs[0].iscale_prefactor(1.0 / self.r_norm)
+        if self.r_norm > 0:
+            self.qs[0].iscale_prefactor(1.0 / self.r_norm)
 
         self.sine = np.zeros(self.N_max) * 1.0j
         self.cosine = np.zeros(self.N_max) * 1.0j
@@ -233,18 +234,23 @@ class GMRES:
         self.H = npc.Array.from_ndarray_trivial(np.zeros((self.N_max + 1, self.N_max)) * 1.0j)
 
     def run(self):
-        if self.total_error[0][0] < self.res:
+        if self.r_norm == 0 or self.total_error[0][0] < self.res:
             return self.x, self.total_error[0][0], self.total_error, self.total_iters
+        breakdown = False
         for _ in range(self.restart):
             converged = False
             for k in range(0, self.N_max):
                 self.arnoldi(k)
+                # An invariant Krylov space cannot be extended, even if N_min is not reached.
+                breakdown = self.H[k + 1, k] == 0
                 self.apply_givens_rotation(k)
                 self.e1[k + 1] = -self.sine[k] * self.e1[k]
                 self.e1[k] = np.conj(self.cosine[k]) * self.e1[k]
                 # The residual is just the last element of $\beta$ vector (see Wikipedia) since $y$ is found exactly.
                 error = np.abs(self.e1[k + 1]) / self.b_norm
                 self.total_error[-1].append(error)
+                if breakdown:
+                    break
                 if error < self.res and k >= self.N_min:
                     converged = True
                     break
@@ -252,12 +258,17 @@ class GMRES:
             self.backsolve(k + 1)
             for i in range(k + 1):
                 self.x.iadd_prefactor_other(self.y[i], self.qs[i])
-            if not converged:
-                self.reset()
-            else:
+            if converged or breakdown:
+                break
+            self.reset()
+            if self.r_norm == 0:
                 break
 
-        return self.x, npc.norm(self.A.matvec(self.x) - self.b) / self.b_norm, self.total_error, self.total_iters
+        residual = npc.norm(self.A.matvec(self.x) - self.b) / self.b_norm
+        if breakdown:
+            # For a singular projected system, the last beta entry need not be the residual.
+            self.total_error[-1][-1] = residual
+        return self.x, residual, self.total_error, self.total_iters
 
     def arnoldi(self, k):
         # Iterative build orthogonal Krylov subspace and $H$ matrix.
@@ -297,6 +308,11 @@ class GMRES:
         # e2[np.abs(e2.to_ndarray()) < 1.e-14] = 0 # N_max should be less than the size of A.
         self.y = npc.Array.from_ndarray_trivial(np.ones(k)) * 1.0j
         for i in range(k - 1, -1, -1):
+            if H[i, i] == 0:
+                # Breakdown need not imply convergence for a singular operator.
+                y = np.linalg.lstsq(H.to_ndarray(), e2.to_ndarray(), rcond=None)[0]
+                self.y = npc.Array.from_ndarray_trivial(y)
+                return
             self.y[i] = e2[i]
             for j in range(i + 1, k):
                 self.y[i] -= H[i, j] * self.y[j]
@@ -309,7 +325,8 @@ class GMRES:
         self.total_error.append([npc.norm(self.rs[-1]) / self.b_norm])
         self.r_norm = npc.norm(self.rs[-1])
         self.qs = [self.rs[-1].copy()]
-        self.qs[-1].iscale_prefactor(1.0 / self.r_norm)
+        if self.r_norm > 0:
+            self.qs[-1].iscale_prefactor(1.0 / self.r_norm)
 
         self.sine = np.zeros(self.N_max) * 1.0j
         self.cosine = np.zeros(self.N_max) * 1.0j
