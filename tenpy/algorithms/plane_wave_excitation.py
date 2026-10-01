@@ -166,6 +166,17 @@ class PlaneWaveExcitationEngine(Algorithm):
         init_env_data : dict
             Dictionary as returned by ``self.env.get_initialization_data()`` from
             :meth:`~tenpy.networks.mpo.MPOEnvironment.get_initialization_data`.
+        init_guess : ``'random' | 'local_gs'``
+            Initial `X` for the eigensolver. ``'random'`` (default): Gaussian entries.
+            ``'local_gs'`` (legacy): per site, the ground state of the zero-site effective
+            Hamiltonian, Lanczos-started from all ones. Avoid it: if the uMPS is invariant
+            under a symmetry permuting the unit-cell sites (e.g. staggered charge
+            conjugation, a one-site shift), at ``p = 0`` the per-site ground states assemble
+            into an exact eigenvector of that symmetry, with a sign fixed by the gauge of
+            the uMPS, and Krylov never leaves its sector. The lowest excitation of the
+            other sector is then silently missed.
+        init_guess_seed : int | None
+            Seed for ``init_guess='random'``, reused for every momentum. Default 0.
 
 
     Attributes
@@ -637,15 +648,22 @@ class PlaneWaveExcitationEngine(Algorithm):
         """
         X_init = []
         valid_charge = False
+        init_guess = self.options.get('init_guess', 'random', str)
+        assert init_guess in ('random', 'local_gs'), init_guess
+        rng = np.random.default_rng(self.options.get('init_guess_seed', 0))
         for i in range(self.L):
             vL = self.VLs[i].get_leg('vR').conj()
             vR = self.ALs[(i + 1) % self.L].get_leg('vL').conj()
+            func = rng.standard_normal if init_guess == 'random' else np.ones
             th0 = npc.Array.from_func(
-                np.ones, [vL, vR], dtype=self.psi.dtype, qtotal=qtotal_change, labels=['vL', 'vR']
+                func, [vL, vR], dtype=self.psi.dtype, qtotal=qtotal_change, labels=['vL', 'vR']
             )
 
             if np.isclose(npc.norm(th0), 0):
                 logger.warning('Initial guess for an X is zero; charges not allowed on site %d', i)
+            elif init_guess == 'random':
+                valid_charge = True
+                th0 /= npc.norm(th0)
             else:
                 valid_charge = True
                 LP = self.GS_env_L.get_LP(i, store=True)
