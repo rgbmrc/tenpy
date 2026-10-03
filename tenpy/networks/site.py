@@ -1111,6 +1111,8 @@ def set_common_charges(sites, new_charges='same', new_names=None, new_mod=None, 
             leg = leg_unsorted
             perm_flat = None
         site.change_charge(leg, perm_flat)
+        if sort_charge:  # as in Site.sort_charge, so add_op permutes dense ops
+            site.used_sort_charge = True
         if new_charge_to_JW_parity is not None:
             site.charge_to_JW_parity = new_charge_to_JW_parity
     if sort_charge:
