@@ -436,7 +436,10 @@ class NearestNeighborModel(Model):
 
         """
         if self.lat.bc_MPS == 'infinite':
-            return psi.expectation_value(self.H_bond, axes=(['p0', 'p1'], ['p0*', 'p1*']))
+            # H_bond[i] acts on (i-1, i), but expectation_value puts ops[i] on (i, i+1)
+            H_bond = self.H_bond[1:] + self.H_bond[:1]
+            E = psi.expectation_value(H_bond, axes=(['p0', 'p1'], ['p0*', 'p1*']))
+            return np.roll(E, 1)
         # else
         return psi.expectation_value(self.H_bond[1:], axes=(['p0', 'p1'], ['p0*', 'p1*']))
 

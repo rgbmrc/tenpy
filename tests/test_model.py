@@ -13,6 +13,7 @@ from tenpy.algorithms.exact_diag import ExactDiag, get_numpy_Hamiltonian
 from tenpy.models import lattice, model
 from tenpy.models.spins import DipolarSpinChain
 from tenpy.models.xxz_chain import XXZChain
+from tenpy.networks.mps import MPS
 
 spin_half_site = tenpy.networks.site.SpinHalfSite('Sz', sort_charge=False)
 
@@ -475,6 +476,31 @@ def test_CouplingMPOModel_group():
         Hgr.idrop_labels()
         Hgr = Hgr.split_legs().to_ndarray()
         assert np.linalg.norm(H - Hgr) < 1.0e-14
+
+
+class _SzSzNNModel(model.CouplingModel, model.NearestNeighborModel):
+    def __init__(self, lat, couplings):
+        model.CouplingModel.__init__(self, lat)
+        for args in couplings:
+            self.add_coupling(*args)
+        model.NearestNeighborModel.__init__(self, lat, self.calc_H_bond())
+
+
+def test_bond_energies_infinite():
+    # E_bond[i] is the energy of bond (i-1, i)
+    J = np.array([1.0, 2.0, 3.0])
+    lat = lattice.Chain(3, spin_half_site, bc='periodic', bc_MPS='infinite')
+    M = _SzSzNNModel(lat, [(J, 0, 'Sz', 0, 'Sz', 1)])
+    psi = MPS.from_product_state(lat.mps_sites(), ['up', 'up', 'down'], bc='infinite', unit_cell_width=1)
+    SzSz = np.array([1, -1, -1]) / 4  # on bonds (0, 1), (1, 2), (2, 3)
+    npt.assert_allclose(M.bond_energies(psi), np.roll(J * SzSz, 1))
+    # inhomogeneous sites: misplaced bond terms would not even contract
+    spin_one_site = tenpy.networks.site.SpinSite(1.0, 'Sz')
+    lat = lattice.Lattice([1], [spin_half_site, spin_one_site], bc='periodic', bc_MPS='infinite')
+    J1, J2 = 1.0, 2.0
+    M = _SzSzNNModel(lat, [(J1, 0, 'Sz', 1, 'Sz', [0]), (J2, 1, 'Sz', 0, 'Sz', [1])])
+    psi = MPS.from_product_state(lat.mps_sites(), ['up', 'up'], bc='infinite', unit_cell_width=1)
+    npt.assert_allclose(M.bond_energies(psi), [J2 / 2, J1 / 2])
 
 
 def test_model_H_conversion(L=6):

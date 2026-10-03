@@ -1,0 +1,2 @@
+- :meth:`~tenpy.models.model.NearestNeighborModel.bond_energies` for infinite MPS evaluated ``H_bond[i]`` (bond ``i-1, i``) on sites ``i, i+1``:
+  wrong per-bond values, or an incompatible-charge error for inhomogeneous sites. Sums over the unit cell of translation-invariant models were unaffected.
