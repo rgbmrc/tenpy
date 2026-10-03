@@ -411,6 +411,64 @@ def test_canonical_form(bc, method):
             assert A_err < 1.0e-13
 
 
+def _add_dangling_state(psi, from_right, own_sector, S_new=1.0e-8):
+    """Append to bond 0 a Schmidt state that has no amplitude coming in from one side.
+
+    `from_right`: nonzero row in B[0], zero column in B[-1]; else the other way round.
+    `own_sector`: the state's charge does not appear on the bond yet.
+    iDMRG can leave such states behind (with tiny S) after truncation.
+    """
+    B0, B1 = psi.get_B(0, 'B'), psi.get_B(psi.L - 1, 'B')
+    leg = B0.get_leg('vL')
+
+    def flat(l):
+        return l.to_qflat() * l.qconj
+
+    if from_right:
+        cand = [-(a + b) for a in flat(B0.get_leg('p')) for b in flat(B0.get_leg('vR'))]
+    else:
+        cand = [a + b for a in flat(B1.get_leg('vL')) for b in flat(B1.get_leg('p'))]
+    present = {tuple(q) for q in flat(leg)}
+    q = next(q for q in cand if (tuple(q) not in present) == own_sector)
+    new = npc.LegCharge.from_qflat(leg.chinfo, np.vstack([leg.to_qflat(), q[np.newaxis]]), leg.qconj)
+    b0, b1 = B0.to_ndarray(), B1.to_ndarray()
+    if from_right:
+        row = np.random.normal(size=b0.shape[1:])
+        row[(q + flat(B0.get_leg('p'))[:, None] + flat(B0.get_leg('vR'))[None]).any(-1)] = 0.0
+        b0 = np.concatenate([b0, row[np.newaxis] / np.linalg.norm(row)], 0)
+        b1 = np.concatenate([b1, np.zeros(b1.shape[:2] + (1,))], 2)
+    else:
+        col = np.random.normal(size=b1.shape[:2])
+        col[(flat(B1.get_leg('vL'))[:, None] + flat(B1.get_leg('p'))[None] - q).any(-1)] = 0.0
+        b0 = np.concatenate([b0, np.zeros((1,) + b0.shape[1:])], 0)
+        b1 = np.concatenate([b1, (col / np.linalg.norm(col))[..., np.newaxis]], 2)
+    Bs = [psi.get_B(i, 'B') for i in range(psi.L)]
+    labels = ['vL', 'p', 'vR']
+    Bs[0] = npc.Array.from_ndarray(b0, [new, B0.get_leg('p'), B0.get_leg('vR')], labels=labels)
+    Bs[-1] = npc.Array.from_ndarray(b1, [B1.get_leg('vL'), B1.get_leg('p'), new.conj()], labels=labels)
+    S0 = np.append(psi.get_SL(0), S_new)
+    S0 /= np.linalg.norm(S0)
+    Ss = [S0] + [psi.get_SL(i) for i in range(1, psi.L)] + [S0]
+    return mps.MPS(psi.sites, Bs, Ss, bc='infinite', form='B', unit_cell_width=psi.unit_cell_width)
+
+
+@pytest.mark.parametrize('from_right', [True, False])
+@pytest.mark.parametrize('own_sector', [True, False])
+def test_canonical_form_infinite2_dangling(from_right, own_sector):
+    np.random.seed(1)
+    s = site.SpinHalfSite('Sz')
+    psi = mps.MPS.from_product_state([s] * 2, ['up', 'down'], bc='infinite', unit_cell_width=2)
+    tebd.RandomUnitaryEvolution(psi, dict(N_steps=6, trunc_params={'chi_max': 8})).run()
+    psi.canonical_form_infinite2()
+    phi = _add_dangling_state(psi, from_right, own_sector)
+    # the QR sweeps drop/sort the dangling state, changing the bond-0 leg mid-iteration
+    phi.canonical_form_infinite2()
+    phi.test_sanity()
+    assert all(np.all(np.isfinite(B.to_ndarray())) for B in phi._B)
+    assert phi.chi == psi.chi
+    assert abs(abs(phi.overlap(psi, understood_infinite=True)) - 1.0) < 1.0e-12
+    assert np.max(phi.norm_test()) < 1.0e-12
+
 @pytest.mark.parametrize('bc', ['finite', 'infinite'])
 def test_apply_op(bc, eps=1.0e-13):
     s = site.SpinHalfSite(None)

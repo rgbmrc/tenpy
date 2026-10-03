@@ -4755,16 +4755,17 @@ class MPS(BaseMPSExpectationValue):
             # -> make sure we don't use multiple S on one bond in our definition of the MPS
             self.convert_form('B')
         # self._B holds original B
-        R_guess = npc.diag(1.0, self._B[0].get_leg('vL'), labels=['vL', 'vR'])
+        leg0 = self._B[0].get_leg('vL')
+        R_guess = npc.diag(1.0, leg0, labels=['vL', 'vR'])
         new_Bs, _, norm = self._canonical_form_right_orthogonalize(R_guess, tol, arnoldi_params)
         if not renormalize:
             self.norm *= norm
         # now we have old_Bs R = R new_Bs with right-orthonormal new_Bs
         self._B = new_Bs
-        C_guess = npc.diag(self.get_SL(0), self._B[0].get_leg('vL'), labels=['vL', 'vR'])
-        # TODO: we sometimes got a legcharge error when using R_guess instead off C_guess,
-        # so the oder of the indices might have changed (from sorting legs?)
-        # reflect this in permutation of singular values
+        # the QRs may have sorted the bond-0 leg or dropped dangling states from it:
+        # the old S then no longer match its indices
+        leg0_new = self._B[0].get_leg('vL')
+        C_guess = npc.diag(self.get_SL(0) if leg0_new == leg0 else 1.0, leg0_new, labels=['vL', 'vR'])
         new_As, C, _ = self._canonical_form_left_orthogonalize(C_guess, tol, arnoldi_params)
         # now we have C new_Bs = new_As C with left and right-orthonormal A/B
         # but not yet diagonal S
@@ -4795,6 +4796,7 @@ class MPS(BaseMPSExpectationValue):
         
     def _canonical_form_left_orthogonalize(self, L, tol, arnoldi_params):
         max_iters = 10_000
+        err = np.inf
         for _ in range(max_iters):
             L /= npc.norm(L)
             L_old = L
@@ -4802,6 +4804,10 @@ class MPS(BaseMPSExpectationValue):
             norm = npc.norm(L)
             L /= norm
             L.itranspose(L_old.get_leg_labels())
+            if L.get_leg('vL') != L_old.get_leg('vL'):
+                # the QRs dropped dangling (zero-weight) states or sorted the leg:
+                # sweep once more, so that the new tensors close over the unit cell
+                continue
             err = npc.norm(L - L_old)
             if err <= tol:
                 return new_As, L, norm
@@ -4823,6 +4829,7 @@ class MPS(BaseMPSExpectationValue):
 
     def _canonical_form_right_orthogonalize(self, R, tol, arnoldi_params):
         max_iters = 10_000
+        err = np.inf
         for _ in range(max_iters):
             R /= npc.norm(R)
             R_old = R
@@ -4830,6 +4837,10 @@ class MPS(BaseMPSExpectationValue):
             norm = npc.norm(R)
             R /= norm
             R.itranspose(R_old.get_leg_labels())
+            if R.get_leg('vR') != R_old.get_leg('vR'):
+                # the QRs dropped dangling (zero-weight) states or sorted the leg:
+                # sweep once more, so that the new tensors close over the unit cell
+                continue
             err = npc.norm(R - R_old)
             if err <= tol:
                 return new_Bs, R, norm

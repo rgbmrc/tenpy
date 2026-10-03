@@ -4196,7 +4196,9 @@ def qr(a, mode='reduced', inner_labels=[None, None], cutoff=None, pos_diag_R=Fal
                 continue
         if pos_diag_R:
             r_diag = np.diag(r_block)
-            phase = r_diag / np.abs(r_diag)
+            phase = np.ones_like(r_diag)
+            nz = r_diag != 0  # rank-deficient blocks: avoid 0/0
+            phase[nz] = r_diag[nz] / np.abs(r_diag[nz])
             K = len(r_diag)
             if K < q_block.shape[1]:
                 q_block[:, :K] *= phase[np.newaxis, :]

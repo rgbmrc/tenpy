@@ -813,6 +813,18 @@ def test_qr():
                             assert npc.norm(QdaggerQ - npc.eye_like(QdaggerQ)) < 1.0e-10
 
 
+def test_qr_rank_deficient():
+    # a zero column inside a stored block gives R[i, i] == 0: pos_diag_R must not produce 0/0
+    leg = npc.LegCharge.from_qflat(npc.ChargeInfo([1]), [[0]] * 3)
+    A_flat = np.random.random((3, 3))
+    A_flat[:, 0] = 0.0
+    A = npc.Array.from_ndarray(A_flat, [leg, leg.conj()])
+    for qconj in [+1, -1]:
+        Q, R = npc.qr(A, pos_diag_R=True, inner_qconj=qconj)
+        assert np.all(np.isfinite(Q.to_ndarray())) and np.all(np.isfinite(R.to_ndarray()))
+        npt.assert_allclose(npc.tensordot(Q, R, axes=1).to_ndarray(), A_flat, atol=1.0e-14)
+        assert np.all(np.diag(R.to_ndarray()).real >= 0.0)
+
 def test_lq():
     for shape in [(4, 4), (6, 8), (8, 6)]:
         tol = shape[0] * shape[1] * 100
