@@ -149,6 +149,30 @@ def construct_orthogonal(M, left=True):
     return Q.split_legs()
 
 
+def _record_sum(excit, err, tol, iters):
+    """Track convergence of an infinite environment sum; reported once per ``run``."""
+    stats = excit.sum_stats
+    stats['calls'] += 1
+    stats['iters'] += iters
+    stats['max_err'] = max(stats['max_err'], err)
+    stats['failed'] += err > tol
+
+
+def _reset_sum_stats(excit):
+    excit.sum_stats = {'calls': 0, 'failed': 0, 'iters': 0, 'max_err': 0.0}
+
+
+def _warn_sum_stats(excit):
+    stats = excit.sum_stats
+    if stats['failed']:
+        method = excit.options.get('sum_method', 'explicit', str)
+        logger.warning(
+            '%s: %d/%d infinite sums not converged (max error %.2e); '
+            'raise sum_iterations or GMRES_params N_max/restart',
+            method, stats['failed'], stats['calls'], stats['max_err'],
+        )
+
+
 class PlaneWaveExcitationEngine(Algorithm):
     r"""Base engine to compute quasiparticle excitations for uniform MPS.
 
@@ -205,6 +229,7 @@ class PlaneWaveExcitationEngine(Algorithm):
 
         assert self.psi.L == self.model.H_MPO.L
         self.L = self.psi.L
+        _reset_sum_stats(self)
 
         self.ALs = [self.psi.get_AL(i) for i in range(self.L)]
         self.ARs = [self.psi.get_AR(i) for i in range(self.L)]
@@ -293,6 +318,7 @@ class PlaneWaveExcitationEngine(Algorithm):
         """
         self.unaligned_H = self.Unaligned_Effective_H(self, p)
         effective_H = SumNpcLinearOperator(self.aligned_H, self.unaligned_H)
+        _reset_sum_stats(self)
         lanczos_params = self.options.subconfig('lanczos_params')
         X_init = self.initial_guess(qtotal_change)
         if len(E_boosts) != len(orthogonal_to):
@@ -319,6 +345,7 @@ class PlaneWaveExcitationEngine(Algorithm):
             import warnings
 
             warnings.warn('Maximum Lanczos iterations needed; be wary of results.')
+        _warn_sum_stats(self)
 
         return np.real_if_close(Es), psis, N
 
@@ -392,11 +419,13 @@ class PlaneWaveExcitationEngine(Algorithm):
             return R
         if sum_method == 'explicit':
             R_sum = R.copy()
-            for _ in range(sum_iterations):
+            for i in range(sum_iterations):
                 R = np.exp(-1.0j * p * self.L) * append_right_env(self.ALs, self.ARs, R, Ws=self.Ws)
                 R_sum.iadd_prefactor_other(1.0, R)
-                if npc.norm(R) < sum_tol:
+                err = npc.norm(R)
+                if err < sum_tol:
                     break
+            _record_sum(self, err, sum_tol, i + 1)
             return R_sum
         elif 'GMRES' in sum_method:
 
@@ -420,7 +449,8 @@ class PlaneWaveExcitationEngine(Algorithm):
 
             tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
             GMRES_params = self.options.subconfig('GMRES_params')
-            R_sum, _, _, _ = GMRES(tm_op, npc.Array.zeros_like(R) * 1.0j, R, GMRES_params).run()
+            R_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(R) * 1.0j, R, GMRES_params).run()
+            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
             return R_sum
         else:
             raise ValueError('Sum method', sum_method, 'not recognized!')
@@ -472,8 +502,10 @@ class PlaneWaveExcitationEngine(Algorithm):
             for i in range(sum_iterations):
                 L = np.exp(1.0j * p * self.L) * append_left_env(self.ARs, self.ALs, L, Ws=self.Ws)
                 L_sum.iadd_prefactor_other(1.0, L)
-                if npc.norm(L) < sum_tol:
+                err = npc.norm(L)
+                if err < sum_tol:
                     break
+            _record_sum(self, err, sum_tol, i + 1)
             return L_sum
         elif 'GMRES' in sum_method:
 
@@ -497,7 +529,8 @@ class PlaneWaveExcitationEngine(Algorithm):
 
             tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
             GMRES_params = self.options.subconfig('GMRES_params')
-            L_sum, _, _, _ = GMRES(tm_op, npc.Array.zeros_like(L) * 1.0j, L, GMRES_params).run()
+            L_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(L) * 1.0j, L, GMRES_params).run()
+            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
             return L_sum
         else:
             raise ValueError('Sum method', sum_method, 'not recognized!')
@@ -737,6 +770,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
 
         assert self.psi.L == self.model.H_MPO.L
         self.L = self.psi.L
+        _reset_sum_stats(self)
 
         self.size = self.options.get('excitation_size', 1, int)
         assert self.size >= 1
@@ -827,6 +861,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         self.aligned_H = self.Aligned_Effective_H(self, p)
         self.unaligned_H = self.Unaligned_Effective_H(self, p)
         effective_H = SumNpcLinearOperator(self.aligned_H, self.unaligned_H)
+        _reset_sum_stats(self)
         lanczos_params = self.options.subconfig('lanczos_params')
         X_init = self.initial_guess(qtotal_change)
         if len(E_boosts) != len(orthogonal_to):
@@ -856,6 +891,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             import warnings
 
             warnings.warn('Maximum Lanczos iterations needed; be wary of results.')
+        _warn_sum_stats(self)
 
         return np.real_if_close(Es), psis, N
 
@@ -962,11 +998,13 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             return R
         if sum_method == 'explicit':
             R_sum = R.copy()
-            for _ in range(sum_iterations):
+            for i in range(sum_iterations):
                 R = np.exp(-1.0j * p * self.L) * append_right_env(self.ALs, self.ARs, R, Ws=self.Ws)
                 R_sum.iadd_prefactor_other(1.0, R)
-                if npc.norm(R) < sum_tol:
+                err = npc.norm(R)
+                if err < sum_tol:
                     break
+            _record_sum(self, err, sum_tol, i + 1)
             return R_sum
         elif 'GMRES' in sum_method:
 
@@ -990,7 +1028,8 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
 
             tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
             GMRES_params = self.options.subconfig('GMRES_params')
-            R_sum, _, _, _ = GMRES(tm_op, npc.Array.zeros_like(R) * 1.0j, R, GMRES_params).run()
+            R_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(R) * 1.0j, R, GMRES_params).run()
+            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
             return R_sum
         else:
             raise ValueError('Sum method', sum_method, 'not recognized!')
@@ -1085,8 +1124,10 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             for i in range(sum_iterations):
                 LB = np.exp(1.0j * p * self.L) * append_left_env(self.ARs, self.ALs, LB, Ws=self.Ws)
                 L_sum.iadd_prefactor_other(1.0, LB)
-                if npc.norm(LB) < sum_tol:
+                err = npc.norm(LB)
+                if err < sum_tol:
                     break
+            _record_sum(self, err, sum_tol, i + 1)
             return L_sum
         elif 'GMRES' in sum_method:
 
@@ -1110,7 +1151,8 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
 
             tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
             GMRES_params = self.options.subconfig('GMRES_params')
-            L_sum, _, _, _ = GMRES(tm_op, npc.Array.zeros_like(LB) * 1.0j, LB, GMRES_params).run()
+            L_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(LB) * 1.0j, LB, GMRES_params).run()
+            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
             return L_sum
         else:
             raise ValueError('Sum method', sum_method, 'not recognized!')
