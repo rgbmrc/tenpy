@@ -704,6 +704,9 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         init_env_data : dict
             Dictionary as returned by ``self.env.get_initialization_data()`` from
             :meth:`~tenpy.networks.mpo.MPOEnvironment.get_initialization_data`.
+        init_guess_seed : int | None
+            Seed for the random initial `X` (complex Gaussian), reused for every momentum.
+            Default 0.
         excitation_size : int
             Number of sites of the excitation, i.e. how many sites in the uniform MPS are replaced
             with orthogonal tensors. This can be larger than the unit cell or incommensurate.
@@ -1336,6 +1339,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         """
         X_init = []
         valid_charge = False
+        rng = np.random.default_rng(self.options.get('init_guess_seed', 0))
         for i in range(self.L):
             # start with random complex state
             vL = self.VLs[i].get_leg('vR').conj()
@@ -1347,10 +1351,10 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
                 vL_label = '(' + vL_label + ''.join(plabels) + ')'
             vR = self.ALs[(i + self.size) % self.L].get_leg('vL').conj()
             th0 = npc.Array.from_func(
-                np.random.standard_normal, [vL, vR], dtype=self.psi.dtype, qtotal=qtotal_change, labels=[vL_label, 'vR']
+                rng.standard_normal, [vL, vR], dtype=self.psi.dtype, qtotal=qtotal_change, labels=[vL_label, 'vR']
             )
             th0 += 1j * npc.Array.from_func(
-                np.random.standard_normal, [vL, vR], dtype=self.psi.dtype, qtotal=qtotal_change, labels=[vL_label, 'vR']
+                rng.standard_normal, [vL, vR], dtype=self.psi.dtype, qtotal=qtotal_change, labels=[vL_label, 'vR']
             )
             if self.size > 1:
                 th0 = th0.split_legs()
