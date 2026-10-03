@@ -469,6 +469,32 @@ def test_canonical_form_infinite2_dangling(from_right, own_sector):
     assert abs(abs(phi.overlap(psi, understood_infinite=True)) - 1.0) < 1.0e-12
     assert np.max(phi.norm_test()) < 1.0e-12
 
+
+@pytest.mark.parametrize('bunched_p', [True, False])
+def test_canonical_form_infinite2_legs(bunched_p):
+    # virtual legs come out sorted & bunched, physical legs untouched (even if not bunched)
+    chinfo = npc.ChargeInfo([1], ['q'])
+    if bunched_p:
+        leg_p = npc.LegCharge.from_qind(chinfo, [0, 2, 3], [[0], [1]])
+    else:
+        leg_p = npc.LegCharge.from_qind(chinfo, [0, 1, 2, 3], [[0], [0], [1]])
+    s = site.Site(leg_p, ['a', 'b', 'c'], sort_charge=False)
+    np.random.seed(2)
+    psi = mps.MPS.from_product_state([s] * 2, ['a', 'c'], bc='infinite', unit_cell_width=2)
+    tebd.RandomUnitaryEvolution(psi, dict(N_steps=6, trunc_params={'chi_max': 8})).run()
+    psi.canonical_form_infinite1()  # reference for the overlap
+    psi0 = psi.copy()
+    psi.canonical_form_infinite2()
+    psi.test_sanity()
+    for i in range(psi.L):
+        B = psi.get_B(i)
+        assert B.get_leg('p') == s.leg
+        for leg in (B.get_leg('vL'), B.get_leg('vR')):
+            assert leg.is_sorted() and leg.is_bunched()
+    assert abs(abs(psi.overlap(psi0, understood_infinite=True)) - 1.0) < 1.0e-12
+    assert np.max(psi.norm_test()) < 1.0e-12
+
+
 @pytest.mark.parametrize('bc', ['finite', 'infinite'])
 def test_apply_op(bc, eps=1.0e-13):
     s = site.SpinHalfSite(None)

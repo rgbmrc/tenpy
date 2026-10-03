@@ -5023,6 +5023,11 @@ def _svd_worker(a, full_matrices, compute_uv, overwrite_a, cutoff, qtotal_LR, in
         VH_qdata = np.stack([qi_C, qi_R], axis=1).astype(np.intp)
         new_leg_slices.append(at)
         new_leg_slices = np.array(new_leg_slices, np.intp)
+        # the new leg lists the blocks in the order of `a._qdata` i.e.
+        # (if sorted) of the `a.legs[1]` charges q, mapped to
+        # (qtotal_R - q * qconj) * inner_qconj: the new leg is unsorted
+        # (although `a.legs[1]` is) if `a.legs[1].qconj * inner_qconj == +1`
+        # (order reversed) or if make_valid wraps charges modulo `mod` (`qtotal_R != 0`)
         new_leg_charges = (qtotal_R - a.legs[1].get_charge(qi_R)) * inner_qconj
         new_leg_charges = chinfo.make_valid(new_leg_charges)
         new_leg_R = LegCharge.from_qind(chinfo, new_leg_slices, new_leg_charges, inner_qconj)

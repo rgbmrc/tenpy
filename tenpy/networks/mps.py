@@ -4780,20 +4780,16 @@ class MPS(BaseMPSExpectationValue):
         # get S with a bunch of SVDs
         for i in reversed(range(len(new_As))):
             th = npc.tensordot(new_As[i], U.scale_axis(S, 'vR'), axes=['vR', 'vL'])
-            th = th.combine_legs(self._p_label + ['vR'], new_axes=1)
+            # qconj=-1: the svd orders the new leg 'vL' like the blocks of this pipe;
+            # with +1 the pipe's charges are negated and 'vL' comes out reversed (unsorted)
+            th = th.combine_legs(self._p_label + ['vR'], new_axes=1, qconj=-1)
             U, S, V = npc.svd(th, cutoff=cutoff, inner_labels=['vR', 'vL'])
             self._B[i] = V.split_legs()
             self.set_SL(i, S)
         # note: we included SVD on i=0; else the virtual leg (-1, 0) might not even be sorted
         U = self.shift_Array_unit_cells(U, 1)
         self._B[-1] = npc.tensordot(self._B[-1], U, axes=['vR', 'vL'])
-        # HACK this unsorts legs! patch here
-        for u in range(self.L):
-            B = self.get_B(u).transpose(("vL", "p", "vR"))  # should not be needed
-            perm, B_new = B.sort_legcharge()
-            self.set_B(u, B_new)
-            self.set_SL(u, self.get_SL(u)[perm[0]])
-        
+
     def _canonical_form_left_orthogonalize(self, L, tol, arnoldi_params):
         max_iters = 10_000
         err = np.inf
