@@ -207,7 +207,7 @@ class UniformMPS(MPS):
         self.valid_umps = max_err < cutoff
         valid = "valid" if self.valid_umps else "invalid"
         level = logging.DEBUG if self.valid_umps else logging.WARNING
-        logger.log(level, 'UniformMPS is %s with max error %d', valid, max_err)
+        logger.log(level, 'UniformMPS is %s with max error %.1e', valid, max_err)
         return err
 
     def copy(self):
@@ -445,12 +445,20 @@ class UniformMPS(MPS):
         psi : :class:`UniformMPS`
             The resulting uniform MPS.
 
+        Notes
+        -----
+        `psi` should be in canonical form (e.g. after
+        :meth:`~tenpy.networks.mps.MPS.canonical_form_infinite2`).
+        `AL` and `AR` are the polar factors of ``AC = S B``, exactly isometric. In exact
+        arithmetic they equal ``S B S^-1`` and ``B``, but ``S^-1`` amplifies rounding errors
+        to ``|AL^+ AL - 1| ~ eps / min(S)``, which biases plane-wave excitations.
+        A non-canonical `psi` shows up as ``AL C != AC`` in :meth:`test_validity`.
         """
         # make copies of 4 types of tensors
         dtype = psi.dtype
-        AR = [psi.get_B(i, form='B').astype(dtype, copy=True).itranspose(cls._B_labels) for i in range(psi.L)]
         AC = [psi.get_B(i, form='Th').astype(dtype, copy=True).itranspose(cls._B_labels) for i in range(psi.L)]
-        AL = [psi.get_B(i, form='A').astype(dtype, copy=True).itranspose(cls._B_labels) for i in range(psi.L)]
+        AL = [cls._polar_AL(A) for A in AC]
+        AR = [cls._polar_AR(A) for A in AC]
         C = []
         for i in range(psi.L):
             C_ = npc.diag(
@@ -470,6 +478,18 @@ class UniformMPS(MPS):
         obj._transfermatrix_keep = psi._transfermatrix_keep
         obj.test_sanity()
         return obj
+
+    @classmethod
+    def _polar_AL(cls, AC):
+        """Isometric `U` of ``AC = U P``, grouping ``(vL, p)``: `AL` if ``P = C`` is positive."""
+        U, _, _ = npc.polar(AC.combine_legs(['vL', 'p']), cutoff=0.0)
+        return U.split_legs().itranspose(cls._B_labels)
+
+    @classmethod
+    def _polar_AR(cls, AC):
+        """Isometric `U` of ``AC = P U``, grouping ``(p, vR)``: `AR` if ``P = C`` is positive."""
+        U, _, _ = npc.polar(AC.combine_legs(['p', 'vR']), cutoff=0.0, left=True)
+        return U.split_legs().itranspose(cls._B_labels)
 
     @classmethod
     def from_lat_product_state(cls, lat, p_state, **kwargs):
