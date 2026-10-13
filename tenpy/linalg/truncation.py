@@ -176,7 +176,9 @@ def truncate(S, options):
         Should be normalized to ``np.sum(S*S) == 1.``.
     options: dict-like
         Config with constraints for the truncation, see :cfg:config:`truncation`.
-        If a constraint can not be fulfilled (without violating a previous one), it is ignored.
+        If a constraint can not be fulfilled (without violating a previous one), it is ignored;
+        except `svd_min` and `trunc_cut`, which then truncate as much as the previous ones allow
+        (e.g. keep exactly `chi_min` values, instead of up to `chi_max`).
         A value ``None`` indicates that the constraint should be ignored.
 
     Returns
@@ -221,7 +223,7 @@ def truncate(S, options):
         good = _combine_constraints(good, good2, 'chi_max')
 
     if chi_min is not None and chi_min > 1:
-        # keep at most chi_max values
+        # keep at least chi_min values
         good2 = np.ones(len(piv), dtype=np.bool_)
         good2[-chi_min + 1 :] = False
         good = _combine_constraints(good, good2, 'chi_min')
@@ -238,11 +240,11 @@ def truncate(S, options):
     if svd_min is not None:
         # keep only values S[i] >= svd_min
         good2 = np.greater_equal(logS, np.log(svd_min))
-        good = _combine_constraints(good, good2, 'svd_min')
+        good = _combine_lower_bound(good, good2, 'svd_min')
 
     if trunc_cut is not None:
         good2 = np.cumsum(S[piv] ** 2) > trunc_cut * trunc_cut
-        good = _combine_constraints(good, good2, 'trunc_cut')
+        good = _combine_lower_bound(good, good2, 'trunc_cut')
 
     cut = np.nonzero(good)[0][0]  # smallest possible cut: keep as many S as allowed
     mask = np.zeros(len(S), dtype=np.bool_)
@@ -721,6 +723,22 @@ def _combine_constraints(good1, good2, warn):
         return res
     warnings.warn("truncation: can't satisfy constraint for " + warn, stacklevel=3)
     return good1
+
+
+def _combine_lower_bound(good1, good2, warn):
+    """Like :func:`_combine_constraints`, for a `good2` allowing all cuts above some index.
+
+    If the constraints conflict (e.g. `chi_min` keeps more values than `trunc_cut` allows),
+    `good2` is not dropped, which would keep up to `chi_max` values, but satisfied as far as
+    `good1` allows: only the largest cut of `good1`, i.e. keep as few values as allowed.
+    """
+    res = np.logical_and(good1, good2)
+    if np.any(res):
+        return res
+    warnings.warn('truncation: can only partially satisfy constraint for ' + warn, stacklevel=3)
+    res = np.zeros_like(good1)
+    res[np.nonzero(good1)[0][-1]] = True
+    return res
 
 
 # truncation parameter for truncating svd values at machine precision

@@ -61,6 +61,36 @@ def test_truncate():
         is_expected_S(S[:6], S_shuffled[mask])
 
 
+def test_truncate_chi_min_floor():
+    # chi_min must act as a floor on trunc_cut / svd_min, not disable them (keeping chi_max)
+    S = 10 ** (-np.arange(15.0))
+    S_shuffled = S.copy()
+    np.random.shuffle(S_shuffled)
+    pars = dict(chi_max=12, svd_min=None, trunc_cut=1.0e-3)  # trunc_cut alone keeps 4
+    mask, _, _ = truncation.truncate(S_shuffled, pars.copy())
+    is_expected_S(S[:4], S_shuffled[mask])
+    pars['chi_min'] = 3  # not binding
+    mask, _, _ = truncation.truncate(S_shuffled, pars.copy())
+    is_expected_S(S[:4], S_shuffled[mask])
+    pars['chi_min'] = 6  # binding: keep exactly 6, not chi_max = 12
+    with pytest.warns(UserWarning, match='partially satisfy constraint for trunc_cut'):
+        mask, _, _ = truncation.truncate(S_shuffled, pars.copy())
+    is_expected_S(S[:6], S_shuffled[mask])
+    pars.update(trunc_cut=None, svd_min=2.0e-3)  # same for svd_min, which alone keeps 3
+    with pytest.warns(UserWarning, match='partially satisfy constraint for svd_min'):
+        mask, _, _ = truncation.truncate(S_shuffled, pars.copy())
+    is_expected_S(S[:6], S_shuffled[mask])
+    # a floor inside a degenerate multiplet S[4] = S[5] = S[6] keeps the whole multiplet
+    S[5] = S[6] * (1.0 + 1.0e-11)
+    S[4] = S[5] * (1.0 + 1.0e-9)
+    S_shuffled = S.copy()
+    np.random.shuffle(S_shuffled)
+    pars.update(chi_min=5, degeneracy_tol=1.0e-8)
+    with pytest.warns(UserWarning, match='partially satisfy constraint for svd_min'):
+        mask, _, _ = truncation.truncate(S_shuffled, pars.copy())
+    is_expected_S(S[:7], S_shuffled[mask])
+
+
 @pytest.mark.parametrize('use_eig_based_svd', [False, True])
 @pytest.mark.parametrize('conserve', [None, 'parity'])
 @pytest.mark.parametrize('move_right', [True, False])
