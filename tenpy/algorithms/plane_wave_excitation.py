@@ -173,6 +173,76 @@ def _warn_sum_stats(excit):
         )
 
 
+def _null_pair(excit, b, right):
+    """Normalized null vectors of ``1 - T`` at ``p = 0``, shaped like the sum's source `b`.
+
+    `T` is one unit cell of the mixed (``AL``/``AR``) transfer matrix with the MPO. Its
+    eigenvalue 1 is a Jordan block, from the two identity channels of the MPO: `C` in the
+    channel accumulating the energy is the right null vector, `C` in the identity channel the
+    left one. ``None`` if `b` is charged: it then has no overlap with them.
+    """
+    C = excit.Cs[0]
+    if np.any(b.qtotal != C.qtotal):
+        return None
+    if right:  # b: vL (ket) wL vL* (bra), energy in IdL
+        C = C.replace_labels(['vL', 'vR'], ['vL', 'vL*'])
+        w, energy, identity = 'wL', excit.IdL, excit.IdR
+    else:  # b: vR (ket) wR vR* (bra), energy in IdR
+        C = C.replace_labels(['vL', 'vR'], ['vR*', 'vR'])
+        w, energy, identity = 'wR', excit.IdR, excit.IdL
+    C = C / npc.norm(C)
+    leg = b.get_leg(w)
+    return [C.add_leg(leg, i, label=w).itranspose(b.get_leg_labels()) for i in (energy, identity)]
+
+
+class _GeometricSumOperator(NpcLinearOperator):
+    """``1 - z T`` for GMRES; with `null` (``GMRES-reg``) plus the projectors on the null
+    vectors of ``1 - T``.
+
+    That makes it invertible at ``p = 0``. For any `z` the solution then differs from the
+    geometric series only along the right null vector, which drops out of the effective
+    Hamiltonian (``VL^dagger AL = 0``); the series itself diverges along it at ``p = 0``.
+    """
+
+    def __init__(self, T, z, null=None):
+        self.T = T
+        self.z = z
+        self.null = null or []
+
+    def matvec(self, vec):
+        out = vec - self.z * self.T(vec)
+        for n in self.null:
+            out.iadd_prefactor_other(npc.inner(n, vec, axes='labels', do_conj=True), n)
+        return out
+
+
+def _geometric_sum(excit, b, T, z, right):
+    """``sum_n (z T)^n b`` for the environment sums; `right` tells their gauge (see
+    :func:`_null_pair`), :meth:`PlaneWaveExcitationEngine.infinite_sum_right` the options."""
+    sum_method = excit.options.get('sum_method', 'explicit', str)
+    if np.isclose(npc.norm(b), 0):
+        return b
+    if sum_method == 'explicit':
+        sum_tol = excit.options.get('sum_tol', 1.0e-10, 'real')
+        sum_iterations = excit.options.get('sum_iterations', 100, int)
+        x, term = b.copy(), b
+        for i in range(sum_iterations):
+            term = z * T(term)
+            x.iadd_prefactor_other(1.0, term)
+            err = npc.norm(term)
+            if err < sum_tol:
+                break
+        _record_sum(excit, err, sum_tol, i + 1)
+        return x
+    if sum_method not in ('GMRES', 'GMRES-reg'):
+        raise ValueError(f'sum_method {sum_method!r} not recognized')
+    null = _null_pair(excit, b, right) if sum_method == 'GMRES-reg' else None
+    GMRES_params = excit.options.subconfig('GMRES_params')
+    x, res, _, iters = GMRES(_GeometricSumOperator(T, z, null), npc.Array.zeros_like(b) * 1.0j, b, GMRES_params).run()
+    _record_sum(excit, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
+    return x
+
+
 class PlaneWaveExcitationEngine(Algorithm):
     r"""Base engine to compute quasiparticle excitations for uniform MPS.
 
@@ -393,19 +463,19 @@ class PlaneWaveExcitationEngine(Algorithm):
         -------
         .. cfg:config :: PlaneWaveExcitationEngine
 
-            sum_method : ``explicit`` | ``GMRES``
+            sum_method : ``explicit`` | ``GMRES`` | ``GMRES-reg``
                 Whether to explicitly sum the environment by applying the unit cell tensors until
                 convergence (default) or solving the geometric series with the GMRES method.
+                At ``p = 0``, ``1 - T`` is singular (a Jordan block from the identity channels of
+                the MPO): the series plateaus and GMRES may stall. ``GMRES-reg`` adds the
+                projectors on its null vectors, which makes the solve well-posed and changes
+                the result only along a direction that drops out of the effective Hamiltonian.
             sum_tol : float
                 Convergence criterion for the explicit summation.
             sum_iterations : int
                 Maximum number of iterations for the explicit summation (default sum_iterations=100).
 
         """
-        sum_tol = self.options.get('sum_tol', 1.0e-10, 'real')
-        sum_iterations = self.options.get('sum_iterations', 100, int)
-        sum_method = self.options.get('sum_method', 'explicit', str)
-
         B = npc.tensordot(self.VLs[self.L - 1], X[self.L - 1], axes=(['vR'], ['vL']))
         RB = append_right_env([B], [self.ARs[self.L - 1]], self.RW, Ws=[self.Ws[self.L - 1]])
         for i in reversed(range(0, self.L - 1)):
@@ -415,45 +485,7 @@ class PlaneWaveExcitationEngine(Algorithm):
             )
         R = RB
 
-        if np.isclose(npc.norm(R), 0):
-            return R
-        if sum_method == 'explicit':
-            R_sum = R.copy()
-            for i in range(sum_iterations):
-                R = np.exp(-1.0j * p * self.L) * append_right_env(self.ALs, self.ARs, R, Ws=self.Ws)
-                R_sum.iadd_prefactor_other(1.0, R)
-                err = npc.norm(R)
-                if err < sum_tol:
-                    break
-            _record_sum(self, err, sum_tol, i + 1)
-            return R_sum
-        elif 'GMRES' in sum_method:
-
-            class helper_matvec(NpcLinearOperator):
-                def __init__(self, excit, ALs, ARs, Ws, sum_method):
-                    self.ALs = ALs
-                    self.ARs = ARs
-                    self.Ws = Ws
-                    self.sum_method = sum_method
-                    self.excit = excit
-
-                def matvec(self, vec):
-                    Tr = append_right_env(self.ALs, self.ARs, vec, Ws=self.Ws)
-                    if 'reg' in self.sum_method:
-                        raise NotImplementedError('GMRES-reg not implemented for multi-site unit cell.')
-                        lr = npc.tensordot(self.excit.l_LR, vec, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        llr = npc.tensordot(self.excit.LWCc, vec, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        T1_r = self.excit.r_LR * ((self.excit.e_LR - 1) * lr + llr) + self.excit.CRW * lr
-                        Tr = Tr - T1_r
-                    return vec - np.exp(-1.0j * p * self.excit.L) * Tr
-
-            tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
-            GMRES_params = self.options.subconfig('GMRES_params')
-            R_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(R) * 1.0j, R, GMRES_params).run()
-            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
-            return R_sum
-        else:
-            raise ValueError('Sum method', sum_method, 'not recognized!')
+        return _geometric_sum(self, R, lambda v: append_right_env(self.ALs, self.ARs, v, Ws=self.Ws), np.exp(-1.0j * p * self.L), right=True)
 
     def infinite_sum_left(self, p, X):
         """Infinite sum to the left, see Eq. (194) in :cite:`vanderstraeten2019`
@@ -473,19 +505,19 @@ class PlaneWaveExcitationEngine(Algorithm):
         -------
         .. cfg:config :: PlaneWaveExcitationEngine
 
-            sum_method : ``explicit`` | ``GMRES``
+            sum_method : ``explicit`` | ``GMRES`` | ``GMRES-reg``
                 Whether to explicitly sum the environment by applying the unit cell tensors until
                 convergence (default) or solving the geometric series with the GMRES method.
+                At ``p = 0``, ``1 - T`` is singular (a Jordan block from the identity channels of
+                the MPO): the series plateaus and GMRES may stall. ``GMRES-reg`` adds the
+                projectors on its null vectors, which makes the solve well-posed and changes
+                the result only along a direction that drops out of the effective Hamiltonian.
             sum_tol : float
                 Convergence criterion for the explicit summation.
             sum_iterations : int
                 Maximum number of iterations for the explicit summation (default sum_iterations=100).
 
         """
-        sum_tol = self.options.get('sum_tol', 1.0e-10, 'real')
-        sum_iterations = self.options.get('sum_iterations', 100, int)
-        sum_method = self.options.get('sum_method', 'explicit', str)
-
         B = npc.tensordot(self.VLs[0], X[0], axes=(['vR'], ['vL']))
         LB = append_left_env([B], [self.ALs[0]], self.LW, Ws=[self.Ws[0]])
         for i in range(1, self.L):
@@ -495,45 +527,7 @@ class PlaneWaveExcitationEngine(Algorithm):
             )
         L = LB
 
-        if np.isclose(npc.norm(L), 0):
-            return L
-        if sum_method == 'explicit':
-            L_sum = L.copy()
-            for i in range(sum_iterations):
-                L = np.exp(1.0j * p * self.L) * append_left_env(self.ARs, self.ALs, L, Ws=self.Ws)
-                L_sum.iadd_prefactor_other(1.0, L)
-                err = npc.norm(L)
-                if err < sum_tol:
-                    break
-            _record_sum(self, err, sum_tol, i + 1)
-            return L_sum
-        elif 'GMRES' in sum_method:
-
-            class helper_matvec(NpcLinearOperator):
-                def __init__(self, excit, ALs, ARs, Ws, sum_method):
-                    self.ALs = ALs
-                    self.ARs = ARs
-                    self.Ws = Ws
-                    self.sum_method = sum_method
-                    self.excit = excit
-
-                def matvec(self, vec):
-                    lT = append_left_env(self.ARs, self.ALs, vec, Ws=self.Ws)
-                    if 'reg' in self.sum_method:
-                        raise NotImplementedError('GMRES-reg not implemented for multi-site unit cell.')
-                        lr = npc.tensordot(vec, self.excit.r_RL, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        lrr = npc.tensordot(vec, self.excit.CcRW, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        T1_l = self.excit.l_RL * ((self.excit.e_RL - 1) * lr + lrr) + self.excit.LWC * lr
-                        lT = lT - T1_l
-                    return vec - np.exp(1.0j * p * self.excit.L) * lT
-
-            tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
-            GMRES_params = self.options.subconfig('GMRES_params')
-            L_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(L) * 1.0j, L, GMRES_params).run()
-            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
-            return L_sum
-        else:
-            raise ValueError('Sum method', sum_method, 'not recognized!')
+        return _geometric_sum(self, L, lambda v: append_left_env(self.ARs, self.ALs, v, Ws=self.Ws), np.exp(1.0j * p * self.L), right=False)
 
     class Aligned_Effective_H(NpcLinearOperator):
         r"""Class defining the effective Hamiltonian for the excitation tensors `X`.
@@ -979,60 +973,22 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         -------
         .. cfg:config :: PlaneWaveExcitationEngine
 
-            sum_method : ``explicit`` | ``GMRES``
+            sum_method : ``explicit`` | ``GMRES`` | ``GMRES-reg``
                 Whether to explicitly sum the environment by applying the unit cell tensors until
                 convergence (default) or solving the geometric series with the GMRES method.
+                At ``p = 0``, ``1 - T`` is singular (a Jordan block from the identity channels of
+                the MPO): the series plateaus and GMRES may stall. ``GMRES-reg`` adds the
+                projectors on its null vectors, which makes the solve well-posed and changes
+                the result only along a direction that drops out of the effective Hamiltonian.
             sum_tol : float
                 Convergence criterion for the explicit summation.
             sum_iterations : int
                 Maximum number of iterations for the explicit summation (default sum_iterations=100).
 
         """
-        sum_tol = self.options.get('sum_tol', 1.0e-10, 'real')
-        sum_iterations = self.options.get('sum_iterations', 100, int)
-        sum_method = self.options.get('sum_method', 'explicit', str)
-
         R = self._starting_right_TR(X)
 
-        if np.isclose(npc.norm(R), 0):
-            return R
-        if sum_method == 'explicit':
-            R_sum = R.copy()
-            for i in range(sum_iterations):
-                R = np.exp(-1.0j * p * self.L) * append_right_env(self.ALs, self.ARs, R, Ws=self.Ws)
-                R_sum.iadd_prefactor_other(1.0, R)
-                err = npc.norm(R)
-                if err < sum_tol:
-                    break
-            _record_sum(self, err, sum_tol, i + 1)
-            return R_sum
-        elif 'GMRES' in sum_method:
-
-            class helper_matvec(NpcLinearOperator):
-                def __init__(self, excit, ALs, ARs, Ws, sum_method):
-                    self.ALs = ALs
-                    self.ARs = ARs
-                    self.Ws = Ws
-                    self.sum_method = sum_method
-                    self.excit = excit
-
-                def matvec(self, vec):
-                    Tr = append_right_env(self.ALs, self.ARs, vec, Ws=self.Ws)
-                    if 'reg' in self.sum_method:
-                        raise NotImplementedError('GMRES-reg not implemented for multi-site unit cell.')
-                        lr = npc.tensordot(self.excit.l_LR, vec, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        llr = npc.tensordot(self.excit.LWCc, vec, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        T1_r = self.excit.r_LR * ((self.excit.e_LR - 1) * lr + llr) + self.excit.CRW * lr
-                        Tr = Tr - T1_r
-                    return vec - np.exp(-1.0j * p * self.excit.L) * Tr
-
-            tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
-            GMRES_params = self.options.subconfig('GMRES_params')
-            R_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(R) * 1.0j, R, GMRES_params).run()
-            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
-            return R_sum
-        else:
-            raise ValueError('Sum method', sum_method, 'not recognized!')
+        return _geometric_sum(self, R, lambda v: append_right_env(self.ALs, self.ARs, v, Ws=self.Ws), np.exp(-1.0j * p * self.L), right=True)
 
     def attach_left(self, VL, X, As, L, Ws=None):
         """Attach excitation tensors to a left environment"""
@@ -1092,19 +1048,19 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         -------
         .. cfg:config :: PlaneWaveExcitationEngine
 
-            sum_method : ``explicit`` | ``GMRES``
+            sum_method : ``explicit`` | ``GMRES`` | ``GMRES-reg``
                 Whether to explicitly sum the environment by applying the unit cell tensors until
                 convergence (default) or solving the geometric series with the GMRES method.
+                At ``p = 0``, ``1 - T`` is singular (a Jordan block from the identity channels of
+                the MPO): the series plateaus and GMRES may stall. ``GMRES-reg`` adds the
+                projectors on its null vectors, which makes the solve well-posed and changes
+                the result only along a direction that drops out of the effective Hamiltonian.
             sum_tol : float
                 Convergence criterion for the explicit summation.
             sum_iterations : int
                 Maximum number of iterations for the explicit summation (default sum_iterations=100).
 
         """
-        sum_tol = self.options.get('sum_tol', 1.0e-10, 'real')
-        sum_iterations = self.options.get('sum_iterations', 100, int)
-        sum_method = self.options.get('sum_method', 'explicit', str)
-
         # shift unit cell to the left to include all excitations
         self.shift_unit_cell = None
         if self.size == 1:
@@ -1117,45 +1073,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             self.shift_unit_cell = 1
         LB = np.exp(1.0j * p * self.L * self.shift_unit_cell) * self._starting_left_TL(X)
 
-        if np.isclose(npc.norm(LB), 0):
-            return LB
-        if sum_method == 'explicit':
-            L_sum = LB.copy()
-            for i in range(sum_iterations):
-                LB = np.exp(1.0j * p * self.L) * append_left_env(self.ARs, self.ALs, LB, Ws=self.Ws)
-                L_sum.iadd_prefactor_other(1.0, LB)
-                err = npc.norm(LB)
-                if err < sum_tol:
-                    break
-            _record_sum(self, err, sum_tol, i + 1)
-            return L_sum
-        elif 'GMRES' in sum_method:
-
-            class helper_matvec(NpcLinearOperator):
-                def __init__(self, excit, ALs, ARs, Ws, sum_method):
-                    self.ALs = ALs
-                    self.ARs = ARs
-                    self.Ws = Ws
-                    self.sum_method = sum_method
-                    self.excit = excit
-
-                def matvec(self, vec):
-                    lT = append_left_env(self.ARs, self.ALs, vec, Ws=self.Ws)
-                    if 'reg' in self.sum_method:
-                        raise NotImplementedError('GMRES-reg not implemented for multi-site unit cell.')
-                        lr = npc.tensordot(vec, self.excit.r_RL, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        lrr = npc.tensordot(vec, self.excit.CcRW, axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
-                        T1_l = self.excit.l_RL * ((self.excit.e_RL - 1) * lr + lrr) + self.excit.LWC * lr
-                        lT = lT - T1_l
-                    return vec - np.exp(1.0j * p * self.excit.L) * lT
-
-            tm_op = helper_matvec(self, self.ALs, self.ARs, self.Ws, sum_method)
-            GMRES_params = self.options.subconfig('GMRES_params')
-            L_sum, res, _, iters = GMRES(tm_op, npc.Array.zeros_like(LB) * 1.0j, LB, GMRES_params).run()
-            _record_sum(self, res, GMRES_params.get('res', 1.0e-8, 'real'), sum(iters))
-            return L_sum
-        else:
-            raise ValueError('Sum method', sum_method, 'not recognized!')
+        return _geometric_sum(self, LB, lambda v: append_left_env(self.ARs, self.ALs, v, Ws=self.Ws), np.exp(1.0j * p * self.L), right=False)
 
     class Aligned_Effective_H(NpcLinearOperator):
         r"""Class defining the effective Hamiltonian for the aligned case.
