@@ -238,8 +238,8 @@ class PlaneWaveExcitationEngine(Algorithm):
         self.H = self.model.H_MPO
         self.Ws = [self.H.get_W(i) for i in range(self.L)]
         if len(self.Ws) < len(self.ALs):
-            assert len(self.ALs) % len(self.Ws)
-            self.Ws = self.Ws * len(self.ALs) // len(self.Ws)
+            assert len(self.ALs) % len(self.Ws) == 0
+            self.Ws = self.Ws * (len(self.ALs) // len(self.Ws))
 
         self.IdL = self.H.get_IdL(0)
         self.IdR = self.H.get_IdR(-1)
@@ -782,8 +782,8 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         self.H = self.model.H_MPO
         self.Ws = [self.H.get_W(i) for i in range(self.L)]
         if len(self.Ws) < len(self.ALs):
-            assert len(self.ALs) % len(self.Ws)
-            self.Ws = self.Ws * len(self.ALs) // len(self.Ws)
+            assert len(self.ALs) % len(self.Ws) == 0
+            self.Ws = self.Ws * (len(self.ALs) // len(self.Ws))
 
         self.IdL = self.H.get_IdL(0)
         self.IdR = self.H.get_IdR(-1)
