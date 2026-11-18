@@ -1309,7 +1309,7 @@ class TwoSiteH(EffectiveH):
         # 'wL', 'wR', 'p0', 'p0*'
         self.W1 = env.H.get_W(i0 + 1).replace_labels(['p', 'p*'], ['p1', 'p1*'])
         # 'wL', 'wR', 'p1', 'p1*'
-        self.bond = _env_bond_term(env, i0 + 1)  # virtual bond term between the two sites
+        self.bond = env.H.get_bond_term(i0 + 1)  # virtual bond term between the two sites
         self.dtype = env.H.dtype
         self.combine = combine
         self.N = (
@@ -1489,7 +1489,7 @@ class ZeroSiteH(EffectiveH):
     def __init__(self, env, i0):
         self.i0 = i0
         # LP and RP both include the bond i0: strip LP's copy
-        self.LP = add_bond_term_left(env.get_LP(i0), _env_bond_term(env, i0), ['vR'], sign=-1)
+        self.LP = add_bond_term_left(env.get_LP(i0), env.H.get_bond_term(i0), ['vR'], sign=-1)
         self.RP = env.get_RP(i0 - 1)
         self.dtype = env.H.dtype
         self.N = self.LP.get_leg('vR').ind_len * self.RP.get_leg('vL').ind_len
@@ -1851,12 +1851,6 @@ class Mixer:
             raise ValueError(msg)
 
         return qtotal_L, qtotal_R
-
-
-def _env_bond_term(env, b):
-    """Virtual bond term `b` of the MPO of `env`, see :meth:`~tenpy.networks.mpo.MPO.get_bond_term`."""
-    H = getattr(env, 'H', None)
-    return None if H is None else H.get_bond_term(b)
 
 
 def _mix_LR(H, i0, amplitude):
@@ -2476,6 +2470,7 @@ class VariationalApplyMPO(VariationalCompression):
             Ignored.
 
         """
+        U_MPO._no_bond_terms('VariationalApplyMPO')
         if resume_data is None:
             resume_data = {}
         init_env_data = resume_data.get('init_env_data', {})

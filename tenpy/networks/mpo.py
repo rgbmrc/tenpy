@@ -862,12 +862,8 @@ class MPO(MPSGeometry):
                 W.get_leg('wR').test_contractible(W2.get_leg('wL'))
         if not (len(self.IdL) == len(self.IdR) == self.L + 1):
             raise ValueError('wrong len of `IdL`/`IdR`')
-        bt = getattr(self, 'bond_terms', None)
-        if bt is not None:
-            if len(bt) != self.L or not all(f is None or callable(f) for f in bt):
-                raise ValueError('bond_terms needs L entries, each None or callable')
-            if self.finite and bt[0] is not None:
-                raise ValueError('bond_terms[0] must be None for finite MPO')
+        if self.has_bond_terms:
+            self.set_bond_terms(self.bond_terms)  # validates
 
     @property
     def chi(self):
@@ -1087,7 +1083,6 @@ class MPO(MPSGeometry):
             The propagator, i.e. approximation :math:`U ~= exp(H*dt)`
 
         """
-        self._no_bond_terms('make_U')
         if approximation == 'II':
             return self.make_U_II(dt)
         elif approximation == 'I':
@@ -1109,6 +1104,7 @@ class MPO(MPSGeometry):
             The propagator, i.e. approximation :math:`U_I ~= exp(H*dt)`
 
         """
+        self._no_bond_terms('make_U_I')
         if self.explicit_plus_hc:
             raise NotImplementedError(
                 "MPO.make_U_I() assumes hermitian H, you can't use "
@@ -1167,6 +1163,7 @@ class MPO(MPSGeometry):
             The propagator, i.e. approximation :math:`UII ~= exp(H*dt)`
 
         """
+        self._no_bond_terms('make_U_II')
         if self.explicit_plus_hc:
             raise NotImplementedError(
                 "MPO.make_U_II() assumes hermitian H, you can't use "
@@ -1668,11 +1665,8 @@ class MPO(MPSGeometry):
             Whether `self` equals `other` to the desired precision.
 
         """
-        bt_s, bt_o = getattr(self, 'bond_terms', None), getattr(other, 'bond_terms', None)
-        if (bt_s is None) != (bt_o is None) or (
-            bt_s is not None and not all(f is g for f, g in zip(bt_s, bt_o, strict=True))
-        ):
-            return False
+        if getattr(self, 'bond_terms', None) != getattr(other, 'bond_terms', None):
+            return False  # compares the callables by identity
         if self.finite:
             num_sites = self.L
         elif max_range is not None and max_range < np.inf:
@@ -2179,6 +2173,7 @@ class MPO(MPSGeometry):
 
         """
         self._no_bond_terms('addition')
+        other._no_bond_terms('addition')
         if self.explicit_plus_hc != other.explicit_plus_hc:
             raise ValueError('Can not add MPOs with different explicit_plus_hc flags')
 
@@ -4198,64 +4193,49 @@ def _block_charges(T, labels):
     return T.chinfo.make_valid(sum(T.legs[a].charges[T._qdata[:, a]] for a in axes))
 
 
-def _add_bond_term(T, bond, labels, w, src_idx, dst_idx, sign, inplace=False):
-    """``T[w=dst] += sign * f(Q) * T[w=src]``, returning a new array (`T` may be modified only if `inplace`)."""
-    f = bond[0]
+def _add_bond_term(T, bond, labels, w, src_idx, dst_idx, sign, inplace):
+    """``T[w=dst] += sign * f(Q) * T[w=src]`` blockwise, see :func:`add_bond_term_left`."""
     axis = T.get_leg_index(w)
     leg = T.legs[axis]
     qi_src, i_src = leg.get_qindex(src_idx)
     qi_dst, i_dst = leg.get_qindex(dst_idx)
-    if T.dtype.kind in 'fc' and np.all(leg.charges[qi_src] == leg.charges[qi_dst]):
-        # fast path: blockwise on the blocks of T, no slicing/setitem of whole arrays
-        qdata = T._qdata
-        sel = np.nonzero(qdata[:, axis] == qi_src)[0]
-        if len(sel) == 0:
-            return T
-        vals = sign * np.asarray(f(_block_charges(T, labels)[sel]), dtype=float)
-        if vals.shape != (len(sel),):
-            raise ValueError(f'bond term returned shape {vals.shape}, expected {(len(sel),)}')
-        isrc = (slice(None),) * axis + (i_src,)
-        idst = (slice(None),) * axis + (i_dst,)
-        dst_size = int(leg.slices[qi_dst + 1] - leg.slices[qi_dst])
-        res = T if inplace else T.copy(deep=False)
-        data = res._data if inplace else list(T._data)
-        existing = {tuple(r): k for k, r in enumerate(qdata[qdata[:, axis] == qi_dst].tolist())}
-        rows_dst = np.nonzero(qdata[:, axis] == qi_dst)[0]
-        new_data, new_qdata = [], []
-        for j, v in zip(sel, vals):
-            row = qdata[j].copy()
-            row[axis] = qi_dst
-            k = existing.get(tuple(row.tolist()))
-            blk_src = data[j]
-            if k is None:  # create the missing block
-                shape = list(blk_src.shape)
-                shape[axis] = dst_size
-                blk = np.zeros(shape, dtype=np.result_type(T.dtype, vals.dtype))
-                blk[idst] = v * blk_src[isrc]
-                new_data.append(blk)
-                new_qdata.append(row)
-                continue
-            k = rows_dst[k]
-            blk = data[k] if inplace else data[k].copy()
-            blk[idst] += v * blk_src[isrc]
-            data[k] = blk
-        res._data = data
-        if new_data:
-            res._data = data + new_data
-            res._qdata = np.vstack([qdata, np.array(new_qdata, dtype=qdata.dtype)])
-            res._qdata_sorted = False
-            res.isort_qdata()
-        return res
-    src = T.take_slice(src_idx, w)  # a (deep) copy
-    if len(src._data) == 0:
+    if np.any(leg.charges[qi_src] != leg.charges[qi_dst]):
+        raise ValueError('bond term between MPO channels of different charge')
+    qdata = T._qdata
+    sel = np.nonzero(qdata[:, axis] == qi_src)[0]
+    if len(sel) == 0:
         return T
-    vals = sign * np.asarray(f(_block_charges(src, labels)), dtype=float)
-    if vals.shape != (len(src._data),):
-        raise ValueError(f'bond term returned shape {vals.shape}, expected {(len(src._data),)}')
-    src = src.astype(np.result_type(src.dtype, vals.dtype), copy=False)
-    for blk, v in zip(src._data, vals):
-        blk *= v
-    return T + src.add_leg(T.get_leg(w), dst_idx, axis=axis, label=w)
+    vals = sign * np.asarray(bond[0](_block_charges(T, labels)[sel]), dtype=float)
+    if vals.shape != (len(sel),):
+        raise ValueError(f'bond term returned shape {vals.shape}, expected {(len(sel),)}')
+    if T.dtype.kind not in 'fc':
+        T, inplace = T.astype(np.float64), True
+    isrc = (slice(None),) * axis + (i_src,)
+    idst = (slice(None),) * axis + (i_dst,)
+    res = T if inplace else T.copy(deep=False)
+    data = list(T._data)  # blocks not written to stay shared with `T`
+    dst_rows = {tuple(qdata[k]): k for k in np.nonzero(qdata[:, axis] == qi_dst)[0]}
+    new_data, new_qdata = [], []
+    for j, v in zip(sel, vals):
+        row = qdata[j].copy()
+        row[axis] = qi_dst
+        k = dst_rows.get(tuple(row))
+        if k is None:  # missing block
+            shape = list(data[j].shape)
+            shape[axis] = leg.slices[qi_dst + 1] - leg.slices[qi_dst]
+            blk = np.zeros(shape, dtype=T.dtype)
+            new_data.append(blk)
+            new_qdata.append(row)
+        else:
+            blk = data[k] if inplace else data[k].copy()
+            data[k] = blk
+        blk[idst] += v * data[j][isrc]
+    res._data = data + new_data
+    if new_data:
+        res._qdata = np.vstack([qdata, new_qdata])
+        res._qdata_sorted = False
+        res.isort_qdata()
+    return res
 
 
 def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0, inplace=False):
@@ -4265,7 +4245,7 @@ def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0, inplace=False)
     ----------
     T : :class:`~tenpy.linalg.np_conserved.Array`
         Tensor with an MPO leg `w` (e.g. `LP`, with labels ``'vR*', 'wR', 'vR'``).
-        Not modified.
+        Not modified unless `inplace`.
     bond : None | tuple
         As returned by :meth:`MPO.get_bond_term`, ``(f, IdL, IdR)``; ``None`` for no term.
     labels : list of str
@@ -4276,12 +4256,13 @@ def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0, inplace=False)
     sign : float
         Prefactor, ``-1`` to remove an already included term (see :meth:`MPOEnvironment.full_contraction`).
     inplace : bool
-        Allow modifying `T` (for a temporary `T`, never for cached environments); always use the returned array.
+        Allow modifying `T` (for a temporary `T`, never for cached environments).
 
     Returns
     -------
     T : :class:`~tenpy.linalg.np_conserved.Array`
-        A new array (or `T` itself if nothing was done).
+        The result; unless `inplace`, a new array which may share unchanged blocks with `T`
+        (or `T` itself if there is nothing to add).
 
     """
     if bond is None:

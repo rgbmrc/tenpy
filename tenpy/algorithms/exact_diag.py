@@ -178,6 +178,8 @@ class ExactDiag:
 
     def build_full_H_from_bonds(self):
         """Calculate self.full_H from bond terms (``H_bond``) of the model."""
+        if getattr(getattr(self.model, 'H_MPO', None), 'has_bond_terms', False):
+            raise NotImplementedError('build_full_H_from_bonds with bond terms')  # H_bond misses them
         if self._exceeds_max_size():
             return
         sites = self.model.lat.mps_sites()
