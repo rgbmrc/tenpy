@@ -31,7 +31,7 @@ import numpy as np
 from ..linalg import np_conserved as npc
 from ..linalg.sparse import NpcLinearOperator, OrthogonalNpcLinearOperator, SumNpcLinearOperator
 from ..linalg.truncation import TruncationError, decompose_theta_qr_based, svd_theta, truncate
-from ..networks.mpo import MPOEnvironment
+from ..networks.mpo import MPOEnvironment, add_bond_term_left
 from ..networks.mps import MPSEnvironment
 from ..tools.misc import consistency_check, find_subclass
 from ..tools.params import asConfig
@@ -1228,6 +1228,7 @@ class OneSiteH(EffectiveH):
             assert i == self.i0 + 1  # TODO: hit this in single-site?!?
             LP = npc.tensordot(self.LHeff, U, axes=['(vR.p0*)', '(vL.p)'])
             LP = npc.tensordot(U.conj(), LP, axes=['(vL*.p*)', '(vR*.p0)'])
+            LP = env._add_bond_term_LP(i, LP)
             env.set_LP(i, LP, age=env.get_LP_age(i - 1) + 1)
         else:
             env.get_LP(i, store=True)
@@ -1237,6 +1238,7 @@ class OneSiteH(EffectiveH):
             assert i == self.i0 - 1
             RP = npc.tensordot(VH, self.RHeff, axes=['(p.vR)', '(p0*.vL)'])
             RP = npc.tensordot(RP, VH.conj(), axes=['(p0.vL*)', '(p*.vR*)'])
+            RP = env._add_bond_term_RP(i, RP)
             env.set_RP(i, RP, age=env.get_RP_age(i + 1) + 1)
         else:
             env.get_RP(i, store=True)
@@ -1307,6 +1309,7 @@ class TwoSiteH(EffectiveH):
         # 'wL', 'wR', 'p0', 'p0*'
         self.W1 = env.H.get_W(i0 + 1).replace_labels(['p', 'p*'], ['p1', 'p1*'])
         # 'wL', 'wR', 'p1', 'p1*'
+        self.bond = _env_bond_term(env, i0 + 1)  # virtual bond term between the two sites
         self.dtype = env.H.dtype
         self.combine = combine
         self.N = (
@@ -1335,11 +1338,13 @@ class TwoSiteH(EffectiveH):
         labels = theta.get_leg_labels()
         if self.combine:
             theta = npc.tensordot(self.LHeff, theta, axes=['(vR.p0*)', '(vL.p0)'])
+            theta = add_bond_term_left(theta, self.bond, ['(vR*.p0)'])  # 'wR' is the middle bond
             theta = npc.tensordot(theta, self.RHeff, axes=[['wR', '(p1.vR)'], ['wL', '(p1*.vL)']])
             theta.ireplace_labels(['(vR*.p0)', '(p1.vL*)'], ['(vL.p0)', '(p1.vR)'])
         else:
             theta = npc.tensordot(self.LP, theta, axes=['vR', 'vL'])
             theta = npc.tensordot(self.W0, theta, axes=[['wL', 'p0*'], ['wR', 'p0']])
+            theta = add_bond_term_left(theta, self.bond, ['vR*', 'p0'])  # 'wR' is the middle bond
             theta = npc.tensordot(theta, self.W1, axes=[['wR', 'p1'], ['wL', 'p1*']])
             theta = npc.tensordot(theta, self.RP, axes=[['wR', 'vR'], ['wL', 'vL']])
             theta.ireplace_labels(['vR*', 'vL*'], ['vL', 'vR'])
@@ -1392,10 +1397,12 @@ class TwoSiteH(EffectiveH):
     def to_matrix(self):
         """Contract `self` to a matrix."""
         if self.combine:
-            contr = npc.tensordot(self.LHeff, self.RHeff, axes=['wR', 'wL'])
+            LHeff = add_bond_term_left(self.LHeff, self.bond, ['(vR*.p0)'])
+            contr = npc.tensordot(LHeff, self.RHeff, axes=['wR', 'wL'])
             contr = contr.combine_legs([['(vR*.p0)', '(p1.vL*)'], ['(vR.p0*)', '(p1*.vL)']], qconj=[+1, -1])
         else:
             contr = npc.tensordot(self.LP, self.W0, axes=['wR', 'wL'])
+            contr = add_bond_term_left(contr, self.bond, ['vR*', 'p0'])
             contr = npc.tensordot(contr, self.W1, axes=['wR', 'wL'])
             contr = npc.tensordot(contr, self.RP, axes=['wR', 'wL'])
             contr = contr.combine_legs([['vR*', 'p0', 'p1', 'vL*'], ['vR', 'p0*', 'p1*', 'vL']], qconj=[+1, -1])
@@ -1423,6 +1430,7 @@ class TwoSiteH(EffectiveH):
             assert i == self.i0 + 1
             LP = npc.tensordot(self.LHeff, U, axes=['(vR.p0*)', '(vL.p)'])
             LP = npc.tensordot(U.conj(), LP, axes=['(vL*.p*)', '(vR*.p0)'])
+            LP = env._add_bond_term_LP(i, LP)
             env.set_LP(i, LP, age=env.get_LP_age(i - 1) + 1)
         else:
             env.get_LP(i, store=True)
@@ -1432,6 +1440,7 @@ class TwoSiteH(EffectiveH):
             assert i == self.i0
             RP = npc.tensordot(VH, self.RHeff, axes=['(p.vR)', '(p1*.vL)'])
             RP = npc.tensordot(RP, VH.conj(), axes=['(p1.vL*)', '(p*.vR*)'])
+            RP = env._add_bond_term_RP(i, RP)
             env.set_RP(i, RP, age=env.get_RP_age(i + 1) + 1)
         else:
             env.get_RP(i, store=True)
@@ -1479,7 +1488,8 @@ class ZeroSiteH(EffectiveH):
 
     def __init__(self, env, i0):
         self.i0 = i0
-        self.LP = env.get_LP(i0)
+        # LP and RP both include the bond i0: strip LP's copy
+        self.LP = add_bond_term_left(env.get_LP(i0), _env_bond_term(env, i0), ['vR'], sign=-1)
         self.RP = env.get_RP(i0 - 1)
         self.dtype = env.H.dtype
         self.N = self.LP.get_leg('vR').ind_len * self.RP.get_leg('vL').ind_len
@@ -1841,6 +1851,12 @@ class Mixer:
             raise ValueError(msg)
 
         return qtotal_L, qtotal_R
+
+
+def _env_bond_term(env, b):
+    """Virtual bond term `b` of the MPO of `env`, see :meth:`~tenpy.networks.mpo.MPO.get_bond_term`."""
+    H = getattr(env, 'H', None)
+    return None if H is None else H.get_bond_term(b)
 
 
 def _mix_LR(H, i0, amplitude):
