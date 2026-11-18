@@ -66,6 +66,9 @@ __all__ = [
     'MPOEnvironmentBuilder',
     'MPOTransferMatrix',
     'grid_insert_ops',
+    'add_bond_term_left',
+    'add_bond_term_right',
+    'check_bond_charges_absolute',
 ]
 
 
@@ -90,6 +93,8 @@ class MPO(MPSGeometry):
         computed and added at runtime, i.e., `self` is not (necessarily) hermitian.
     unit_cell_width : int
         See :attr:`~tenpy.models.lattice.Lattice.mps_unit_cell_width`.
+    bond_terms : None | list of {None | callable}
+        Virtual bond terms, see :meth:`set_bond_terms`.
 
     Attributes
     ----------
@@ -113,6 +118,8 @@ class MPO(MPSGeometry):
     explicit_plus_hc : bool
         If True, this flag indicates that the hermitian conjugate of the MPO should be
         computed and added at runtime, i.e., `self` is not (necessarily) hermitian.
+    bond_terms : None | list of {None | callable}
+        Virtual bond terms (length `L`), see :meth:`set_bond_terms`; ``None`` if there are none.
     _W : list of :class:`~tenpy.linalg.np_conserved.Array`
         The matrices of the MPO. Labels are ``'wL', 'wR', 'p', 'p*'``.
     _valid_bc : tuple of str
@@ -147,6 +154,7 @@ class MPO(MPSGeometry):
         max_range=None,
         explicit_plus_hc=False,
         mps_unit_cell_width=None,
+        bond_terms=None,
     ):
         super().__init__(sites, bc, unit_cell_width=mps_unit_cell_width)
         self.dtype = dtype = np.result_type(*[W.dtype for W in Ws])
@@ -156,11 +164,103 @@ class MPO(MPSGeometry):
         self.grouped = 1
         self.max_range = max_range
         self.explicit_plus_hc = explicit_plus_hc
+        self.bond_terms = None
         self._graph = None
         # for iterative environment initialization
         self._outer_permutation = None
         self._cycles = None
         self.test_sanity()
+        if bond_terms is not None:
+            self.set_bond_terms(bond_terms)
+
+    @property
+    def has_bond_terms(self):
+        """Whether there are virtual bond terms, see :meth:`set_bond_terms`."""
+        return getattr(self, 'bond_terms', None) is not None
+
+    def set_bond_terms(self, bond_terms):
+        r"""Add *virtual bond terms* :math:`\sum_b f_b(Q_b)` to the Hamiltonian represented by `self`.
+
+        The total operator is :math:`H = H_{MPO} + \sum_b f_b(Q_b)`, where :math:`Q_b` is the
+        charge label of the MPS bond `b` (the bond to the *left* of site `b`) of the state it acts
+        on, i.e. a function of the (conserved) charge to the left of site `b`.
+        This allows to describe e.g. the electric field energy of a gauge theory with Gauss law
+        solved, which is non-local in terms of the physical operators.
+
+        Conventions:
+
+        - The *raw* stored charge labels of the bond are used, i.e. including the `chargeL` of the
+          MPS (the same as in ``psi.get_B(b).get_leg('vL').to_qflat()``).
+          All MPS tensors need ``qtotal == 0`` (:func:`check_bond_charges_absolute`).
+        - Every environment includes the bond term of its own open bond; algorithms contracting
+          two environments over a site add the middle bond.
+        - For finite `bc`, there are no terms on the outer bonds, i.e. ``bond_terms[0]`` must be
+          ``None`` (and bond `L` is ignored).
+        - Not compatible with :attr:`explicit_plus_hc`, `bc` ``'segment'`` and non-trivial
+          :attr:`~tenpy.linalg.charges.ChargeInfo.trivial_shift`.
+        - Supported by DMRG (including the plane-wave excitation code); other algorithms and
+          MPO manipulations raise a ``NotImplementedError``.
+
+        Parameters
+        ----------
+        bond_terms : None | list of {None | callable}
+            Length `L`, entry `b` for the bond left of site `b`.
+            A callable ``f(q)`` takes an integer array of shape ``(n, qnumber)`` of charge labels and
+            returns *real* floats of shape ``(n,)``. ``None`` entries are no term;
+            an all-``None`` list (or ``None``) removes the bond terms.
+
+        """
+        if bond_terms is None or all(f is None for f in bond_terms):
+            self.bond_terms = None
+            return
+        bond_terms = list(bond_terms)
+        if len(bond_terms) != self.L:
+            raise ValueError(f'bond_terms needs length L={self.L:d}, got {len(bond_terms):d}')
+        if not all(f is None or callable(f) for f in bond_terms):
+            raise ValueError('bond_terms entries need to be None or callable')
+        if self.finite and bond_terms[0] is not None:
+            raise ValueError('bond_terms[0] must be None for finite MPO (no bond left of the first site)')
+        if self.bc == 'segment':
+            raise NotImplementedError('bond terms with segment boundary conditions')
+        if self.explicit_plus_hc:
+            raise NotImplementedError('bond terms with explicit_plus_hc')
+        if not self.chinfo.trivial_shift:
+            raise NotImplementedError('bond terms with non-trivial shifts of charges')
+        if self.chinfo.qnumber < 1:
+            raise ValueError('bond terms need conserved charges')
+        self.bond_terms = bond_terms
+
+    def get_bond_term(self, b):
+        """Return the bond term data for bond `b` (left of site `b`), or ``None``.
+
+        Returns
+        -------
+        bond : None | tuple
+            ``None`` if there is no term on the bond, else ``(f, IdL, IdR)``, where `f` is the
+            callable and ``IdL = self.get_IdL(b)``, ``IdR = self.get_IdR(b-1)`` are the indices of
+            the MPO channels to which the term is attached.
+            This is the format expected by :func:`add_bond_term_left` and
+            :func:`add_bond_term_right`.
+
+        """
+        bt = getattr(self, 'bond_terms', None)
+        if bt is None:
+            return None
+        if self.explicit_plus_hc:
+            raise NotImplementedError('bond terms with explicit_plus_hc')
+        if self.finite:
+            if b <= 0 or b >= self.L:
+                return None
+        else:
+            b = b % self.L
+        f = bt[b]
+        if f is None:
+            return None
+        return f, self.get_IdL(b), self.get_IdR(b - 1)
+
+    def _no_bond_terms(self, what):
+        if self.has_bond_terms:
+            raise NotImplementedError(f'{what} with bond terms')
 
     def _reset_graph(self):
         # set proper defaults and avoid carrying graph if not valid
@@ -426,6 +526,7 @@ class MPO(MPSGeometry):
             The `name` of `h5gr` with a ``'/'`` in the end.
 
         """
+        self._no_bond_terms('save_hdf5')
         hdf5_saver.save(self.sites, subpath + 'sites')
         hdf5_saver.save(self.chinfo, subpath + 'chinfo')
         hdf5_saver.save(self._W, subpath + 'tensors')
@@ -486,6 +587,7 @@ class MPO(MPSGeometry):
             warnings.warn(msg, stacklevel=2)
             obj.unit_cell_width = len(obj.sites)
         obj.explicit_plus_hc = h5gr.attrs.get('explicit_plus_hc', False)
+        obj.bond_terms = None
         obj._graph = None
         obj._outer_permutation = None
         obj._cycles = None
@@ -760,6 +862,12 @@ class MPO(MPSGeometry):
                 W.get_leg('wR').test_contractible(W2.get_leg('wL'))
         if not (len(self.IdL) == len(self.IdR) == self.L + 1):
             raise ValueError('wrong len of `IdL`/`IdR`')
+        bt = getattr(self, 'bond_terms', None)
+        if bt is not None:
+            if len(bt) != self.L or not all(f is None or callable(f) for f in bt):
+                raise ValueError('bond_terms needs L entries, each None or callable')
+            if self.finite and bt[0] is not None:
+                raise ValueError('bond_terms[0] must be None for finite MPO')
 
     @property
     def chi(self):
@@ -818,6 +926,8 @@ class MPO(MPSGeometry):
         self.IdL = factor * self.IdL[:-1] + [self.IdL[-1]]
         self.IdR = factor * self.IdR[:-1] + [self.IdR[-1]]
         self.unit_cell_width *= factor
+        if self.has_bond_terms:
+            self.bond_terms = factor * self.bond_terms
         if self._graph is not None:
             self._graph = factor * self._graph
         # can keep self._ordering_checked, outer_permutations
@@ -840,6 +950,7 @@ class MPO(MPSGeometry):
             The sites grouped together.
 
         """
+        self._no_bond_terms('group_sites')
         if grouped_sites is None:
             grouped_sites = group_sites(self.sites, n, charges='same')
         else:
@@ -888,6 +999,7 @@ class MPO(MPSGeometry):
         tenpy.networks.mps.MPS.extract_segment : similar method for MPS.
 
         """
+        self._no_bond_terms('extract_segment')
         sites_per_ring = self.L // self.unit_cell_width
         unit_cell_width, remainder = divmod(last + 1 - first, sites_per_ring)
         if remainder != 0:
@@ -975,6 +1087,7 @@ class MPO(MPSGeometry):
             The propagator, i.e. approximation :math:`U ~= exp(H*dt)`
 
         """
+        self._no_bond_terms('make_U')
         if approximation == 'II':
             return self.make_U_II(dt)
         elif approximation == 'I':
@@ -1136,7 +1249,7 @@ class MPO(MPSGeometry):
         """
         if self.finite:
             return self.expectation_value_finite(psi, **init_env_data)
-        elif self.max_range is None or self.max_range > 10 * self.L:
+        elif self.has_bond_terms or self.max_range is None or self.max_range > 10 * self.L:
             return self.expectation_value_TM(psi, tol=tol, **init_env_data)
         else:
             return self.expectation_value_power(psi, tol=tol, max_range=max_range, **init_env_data)
@@ -1240,6 +1353,7 @@ class MPO(MPSGeometry):
             For an infinite MPS: the density per site.
 
         """
+        self._no_bond_terms('expectation_value_power')
         if psi.finite:
             raise ValueError('not infinite MPS')
         env = MPOEnvironment(psi, self, psi, start_env_sites=0)
@@ -1313,6 +1427,7 @@ class MPO(MPSGeometry):
             (Set this to 0 to obtain only the part ``<psi|self^2|psi>``.)
 
         """
+        self._no_bond_terms('variance')
         if self.bc != 'finite':
             raise ValueError('works only for finite systems')
         if self.L != psi.L:
@@ -1422,6 +1537,7 @@ class MPO(MPSGeometry):
             The terms in `self` with left-most index in `start`.
 
         """
+        self._no_bond_terms('to_TermList')
         if start is not None:
             start = to_iterable(start)
         else:
@@ -1510,7 +1626,14 @@ class MPO(MPSGeometry):
         # could keep graph in principle and only conjugate the operators
         # but its probably not worth the effort since building it is very fast
         return MPO(
-            self.sites, Ws, self.bc, self.IdL, self.IdR, self.max_range, mps_unit_cell_width=self.unit_cell_width
+            self.sites,
+            Ws,
+            self.bc,
+            self.IdL,
+            self.IdR,
+            self.max_range,
+            mps_unit_cell_width=self.unit_cell_width,
+            bond_terms=getattr(self, 'bond_terms', None),  # f is real
         )
 
     def is_hermitian(self, eps=1.0e-10, max_range=None):
@@ -1545,6 +1668,11 @@ class MPO(MPSGeometry):
             Whether `self` equals `other` to the desired precision.
 
         """
+        bt_s, bt_o = getattr(self, 'bond_terms', None), getattr(other, 'bond_terms', None)
+        if (bt_s is None) != (bt_o is None) or (
+            bt_s is not None and not all(f is g for f, g in zip(bt_s, bt_o, strict=True))
+        ):
+            return False
         if self.finite:
             num_sites = self.L
         elif max_range is not None and max_range < np.inf:
@@ -1587,6 +1715,7 @@ class MPO(MPSGeometry):
             See above.
 
         """
+        self._no_bond_terms('apply')
         options = asConfig(options, 'ApplyMPO')
         method = options['compression_method']
         trunc_params = options.subconfig('trunc_params')
@@ -1626,6 +1755,7 @@ class MPO(MPSGeometry):
             The MPS to which `self` should be applied. Modified in place!
 
         """
+        self._no_bond_terms('apply_naively')
         bc = psi.bc
         if bc != self.bc:
             raise ValueError('Boundary conditions of MPS and MPO are not the same')
@@ -1711,6 +1841,7 @@ class MPO(MPSGeometry):
                 reduces cut for Schmidt values to `trunc_weight * svd_min`
 
         """
+        self._no_bond_terms('apply_zipup')
         options = asConfig(options, 'zip_up')
         m_temp = options.get('m_temp', 2, int)
         trunc_weight = options.get('trunc_weight', 1.0, 'real')
@@ -1800,6 +1931,7 @@ class MPO(MPSGeometry):
         Another choice is to modify `N` tensors specified by the input argument `sites`.
 
         """
+        self._no_bond_terms('plus_identity')
         if self.bc != 'finite':
             raise NotImplementedError('MPO.add_identity only works for finite MPO.')
         if self.explicit_plus_hc:
@@ -2046,6 +2178,7 @@ class MPO(MPSGeometry):
             The sum `self + other`.
 
         """
+        self._no_bond_terms('addition')
         if self.explicit_plus_hc != other.explicit_plus_hc:
             raise ValueError('Can not add MPOs with different explicit_plus_hc flags')
 
@@ -2786,6 +2919,9 @@ class MPOEnvironment(BaseEnvironment):
 
     def __init__(self, bra, H, ket, cache=None, **init_env_data):
         self.H = H
+        if H.has_bond_terms:
+            check_bond_charges_absolute(bra)
+            check_bond_charges_absolute(ket)
         super().__init__(bra, ket, cache, **init_env_data)
         self.dtype = np.result_type(bra.dtype, ket.dtype, H.dtype)
 
@@ -2851,6 +2987,8 @@ class MPOEnvironment(BaseEnvironment):
                 self.ket.canonical_form()
 
             # select method for initialization
+            if self.H.has_bond_terms:
+                force_init_method = 'TM'  # 'iter' does not know about bond terms
             if not self.chinfo.trivial_shift:
                 if force_init_method is None:
                     force_init_method = 'TM'
@@ -2972,6 +3110,7 @@ class MPOEnvironment(BaseEnvironment):
         init_LP = super().init_LP(i0, 0)
         leg_mpo = self.H.get_W(i0).get_leg('wL').conj()
         init_LP = init_LP.add_leg(leg_mpo, IdL, axis=1, label='wR')
+        init_LP = self._add_bond_term_LP(i0, init_LP)
         for j in range(i0, i):
             init_LP = self._contract_LP(j, init_LP)
         return init_LP
@@ -2999,6 +3138,7 @@ class MPOEnvironment(BaseEnvironment):
         init_RP = super().init_RP(i0, 0)
         leg_mpo = self.H.get_W(i0).get_leg('wR').conj()
         init_RP = init_RP.add_leg(leg_mpo, IdR, axis=1, label='wL')
+        init_RP = self._add_bond_term_RP(i0, init_RP)
         for j in range(i0, i, -1):
             init_RP = self._contract_RP(j, init_RP)
         return init_RP
@@ -3079,6 +3219,8 @@ class MPOEnvironment(BaseEnvironment):
         """
         # same as MPSEnvironment.full_contraction, but also contract 'wL' with 'wR'
         LP, RP = self._full_contraction_LP_RP(i0)
+        # LP and RP both include the bond between them: strip LP's copy
+        LP = add_bond_term_left(LP, self.H.get_bond_term(i0 + 1), ['vR'], sign=-1)
         res = npc.inner(LP, RP, axes=[['vR*', 'wR', 'vR'], ['vL*', 'wL', 'vL']], do_conj=False)
         if self.H.explicit_plus_hc:
             res = res + np.conj(res)
@@ -3092,7 +3234,7 @@ class MPOEnvironment(BaseEnvironment):
         axes = (self.bra._get_p_label('*') + ['vL*'], self.ket._p_label + ['vR*'])
         # for a usual MPS, axes = (['p*', 'vL*'], ['p', 'vR*'])
         LP = npc.tensordot(self.bra.get_B(i, form='A').conj(), LP, axes=axes)
-        return LP  # labels 'vR*', 'wR', 'vR'
+        return self._add_bond_term_LP(i + 1, LP)  # labels 'vR*', 'wR', 'vR'
 
     def _contract_RP(self, i, RP):
         """Contract RP with the tensors on site `i` to form ``self._RP[i-1]``"""
@@ -3102,7 +3244,15 @@ class MPOEnvironment(BaseEnvironment):
         axes = (self.ket._p_label + ['vL*'], self.ket._get_p_label('*') + ['vR*'])
         # for a usual MPS, axes = (['p', 'vL*'], ['p*', 'vR*'])
         RP = npc.tensordot(RP, self.bra.get_B(i, form='B').conj(), axes=axes)
-        return RP  # labels 'vL', 'wL', 'vL*'
+        return self._add_bond_term_RP(i - 1, RP)  # labels 'vL', 'wL', 'vL*'
+
+    def _add_bond_term_LP(self, i, LP):
+        """Add the bond term of bond `i` (left of site `i`, the open bond of ``LP[i]``) to `LP`."""
+        return add_bond_term_left(LP, self.H.get_bond_term(i), ['vR'])
+
+    def _add_bond_term_RP(self, i, RP):
+        """Add the bond term of bond `i+1` (right of site `i`, the open bond of ``RP[i]``) to `RP`."""
+        return add_bond_term_right(RP, self.H.get_bond_term(i + 1), ['vL'])
 
     def _contract_LHeff(self, i, label_p='p0', pipe=None):
         LP = self.get_LP(i)
@@ -3184,6 +3334,7 @@ class MPOEnvironmentBuilder:
     """
 
     def __init__(self, H, psi):
+        H._no_bond_terms('MPOEnvironmentBuilder')
         self.H = H
         self.ket = psi
         self.L = psi.L
@@ -3725,6 +3876,9 @@ class MPOTransferMatrix(NpcLinearOperator):
         Indices of the MPO leg between unit cells, where only identities are to the left/right.
     _M, _M_conj, _W : list of :class:`~tenpy.linalg.np_conserved.Array`
         Tensors to be contracted into `vec` in :meth:`matvec`.
+    _bonds : list of {None | tuple}
+        Virtual bond terms (see :meth:`MPO.get_bond_term`) to add to `vec` after each step of
+        :meth:`matvec`, i.e. the term of the bond opened by that step.
     guess : :class:`~tenpy.linalg.np_conserved.Array`
         Initial guess as npc Array.
     flat_linop : :class:`~tenpy.linalg.sparse.FlatLinearOperator`
@@ -3749,6 +3903,7 @@ class MPOTransferMatrix(NpcLinearOperator):
         self._M = []
         self._M_conj = []
         self._W = []
+        self._bonds = []
         self.IdL = H.get_IdL(0)
         self.IdR = H.get_IdR(-1)  # on bond between MPS unit cells
         self.unit_cell_width = H.unit_cell_width * (L // H.L)
@@ -3773,6 +3928,7 @@ class MPOTransferMatrix(NpcLinearOperator):
                 self._M.append(B.transpose(['vL', 'p', 'vR']))
                 self._W.append(H.get_W(i).transpose(['p*', 'wR', 'p', 'wL']).astype(dtype, False))
                 self._M_conj.append(B.conj().itranspose(['vR*', 'p*', 'vL*']))
+                self._bonds.append(H.get_bond_term(i))  # bond i is left of site i, opened by this step
 
             # vR = self._M[0].get_leg('vR')
             self._chi0 = chi0 = vR.ind_len
@@ -3798,6 +3954,7 @@ class MPOTransferMatrix(NpcLinearOperator):
                 self._M.append(A.transpose(['vL', 'p', 'vR']))
                 self._W.append(H.get_W(i).transpose(['wR', 'p', 'wL', 'p*']).astype(dtype, False))
                 self._M_conj.append(A.conj().itranspose(['vR*', 'p*', 'vL*']))
+                self._bonds.append(H.get_bond_term(i + 1))  # bond opened by this step
 
             # vL = self._M[0].get_leg('vL')
             self._chi0 = chi0 = vL.ind_len
@@ -3855,18 +4012,20 @@ class MPOTransferMatrix(NpcLinearOperator):
         """
         if not self.transpose:  # right to left
             vec.itranspose(['vL', 'wL', 'vL*'])  # shouldn't do anything
-            for Bc, W, B in zip(self._M_conj, self._W, self._M):
+            for Bc, W, B, bond in zip(self._M_conj, self._W, self._M, self._bonds):
                 # vec: vL wL vL*
                 vec = npc.tensordot(B, vec, axes=['vR', 'vL'])  # vL p wL vL*
                 vec = npc.tensordot(vec, W, axes=[['p', 'wL'], ['p*', 'wR']])  # vL vL* p wL
                 vec = npc.tensordot(vec, Bc, axes=[['vL*', 'p'], ['vR*', 'p*']])  # vL wL vL*
+                vec = add_bond_term_right(vec, bond, ['vL'])
             vec = vec.shift_charges_horizontal(dx_0=self.unit_cell_width)
         else:
             vec.itranspose(['vR*', 'wR', 'vR'])  # shouldn't do anything
-            for Ac, W, A in zip(self._M_conj, self._W, self._M):
+            for Ac, W, A, bond in zip(self._M_conj, self._W, self._M, self._bonds):
                 vec = npc.tensordot(vec, A, axes=['vR', 'vL'])  # vR* wR p vR
                 vec = npc.tensordot(W, vec, axes=[['wL', 'p*'], ['wR', 'p']])  # wR p vR* vR
                 vec = npc.tensordot(Ac, vec, axes=[['p*', 'vL*'], ['p', 'vR*']])  # vR* wR vR
+                vec = add_bond_term_left(vec, bond, ['vR'])
             vec = vec.shift_charges_horizontal(dx_0=-self.unit_cell_width)
         if project:
             self._project(vec)
@@ -4017,13 +4176,92 @@ class MPOTransferMatrix(NpcLinearOperator):
             if not isinstance(SL, npc.Array):
                 vL = init_env_data['init_LP'].get_leg('vR').conj()
                 SL = npc.diag(SL, vL, dtype=np.promote_types(psi.dtype, H.dtype), labels=['vL', 'vR'])
-            E0 = npc.tensordot(init_env_data['init_LP'], SL, axes=(['vR'], ['vL']))
+            # init_LP and init_RP both contain the bond `first`: strip one copy
+            LP0 = add_bond_term_left(init_env_data['init_LP'], H.get_bond_term(first), ['vR'], sign=-1)
+            E0 = npc.tensordot(LP0, SL, axes=(['vR'], ['vL']))
             E0 = npc.tensordot(E0, SL.conj(), axes=(['vR*'], ['vL*']))
             E0 = npc.tensordot(E0, init_env_data['init_RP'], axes=(['vR', 'wR', 'vR*'], ['vL', 'wL', 'vL*']))
             # E0 = LP * s^2 * RP on site 0
             return init_env_data, Es, E0
         # else:
         return init_env_data
+
+
+def _block_charges(T, labels):
+    """Raw charge labels of the blocks of `T`, summed over the legs `labels`; shape ``(nblocks, qnumber)``.
+
+    `LegCharge.conj` and pipes keep the raw labels (only `qconj` flips / the sum is raw),
+    so this is the raw bond charge for the (conjugated) MPS legs ``'vL', 'vR', 'vL*', 'vR*'``
+    and the sum for several legs.
+    """
+    axes = T.get_leg_indices(list(labels))
+    return T.chinfo.make_valid(sum(T.legs[a].charges[T._qdata[:, a]] for a in axes))
+
+
+def _add_bond_term(T, bond, labels, w, src_idx, dst_idx, sign):
+    """``T[w=dst] += sign * f(Q) * T[w=src]``, returning a new array (`T` is never modified)."""
+    f = bond[0]
+    src = T.take_slice(src_idx, w)  # a (deep) copy
+    if len(src._data) == 0:
+        return T
+    vals = sign * np.asarray(f(_block_charges(src, labels)), dtype=float)
+    if vals.shape != (len(src._data),):
+        raise ValueError(f'bond term returned shape {vals.shape}, expected {(len(src._data),)}')
+    src = src.astype(np.result_type(src.dtype, vals.dtype), copy=False)
+    for blk, v in zip(src._data, vals):
+        blk *= v
+    axis = T.get_leg_index(w)
+    return T + src.add_leg(T.get_leg(w), dst_idx, axis=axis, label=w)
+
+
+def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0):
+    """Add a virtual bond term to a left-environment-like tensor, ``T[w=IdR] += sign * f(Q) T[w=IdL]``.
+
+    Parameters
+    ----------
+    T : :class:`~tenpy.linalg.np_conserved.Array`
+        Tensor with an MPO leg `w` (e.g. `LP`, with labels ``'vR*', 'wR', 'vR'``).
+        Not modified.
+    bond : None | tuple
+        As returned by :meth:`MPO.get_bond_term`, ``(f, IdL, IdR)``; ``None`` for no term.
+    labels : list of str
+        Legs of `T` whose raw charges sum to the charge `Q` the function `f` is evaluated at,
+        e.g. ``['vR']`` or ``['vR*', 'p0']`` (the raw charges of conjugate legs are the same).
+    w : str
+        Label of the MPO leg.
+    sign : float
+        Prefactor, ``-1`` to remove an already included term (see :meth:`MPOEnvironment.full_contraction`).
+
+    Returns
+    -------
+    T : :class:`~tenpy.linalg.np_conserved.Array`
+        A new array (or `T` itself if nothing was done).
+
+    """
+    if bond is None:
+        return T
+    return _add_bond_term(T, bond, labels, w, bond[1], bond[2], sign)
+
+
+def add_bond_term_right(T, bond, labels=('vL',), w='wL', sign=1.0):
+    """Add a virtual bond term to a right-environment-like tensor, ``T[w=IdL] += sign * f(Q) T[w=IdR]``.
+
+    The counterpart of :func:`add_bond_term_left` for e.g. `RP` (labels ``'vL', 'wL', 'vL*'``).
+    """
+    if bond is None:
+        return T
+    return _add_bond_term(T, bond, labels, w, bond[2], bond[1], sign)
+
+
+def check_bond_charges_absolute(psi):
+    """Raise a ValueError unless all tensors of `psi` have ``qtotal == 0``.
+
+    Needed for bond terms, where the raw charge labels of the bonds are the physical charges.
+    """
+    Ts = psi._AL + psi._AR if hasattr(psi, '_AL') else psi._B
+    for T in Ts:
+        if np.any(T.qtotal != 0):
+            raise ValueError('bond terms need MPS tensors with qtotal=0 (charges on the bonds are absolute)')
 
 
 def grid_insert_ops(site, grid):
