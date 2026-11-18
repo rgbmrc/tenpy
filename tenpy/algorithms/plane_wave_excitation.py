@@ -481,7 +481,7 @@ class PlaneWaveExcitationEngine(Algorithm):
         self.unaligned_H = self.Unaligned_Effective_H(self, p)
         effective_H = SumNpcLinearOperator(self.aligned_H, self.unaligned_H)
         HX = effective_H.matvec(X)
-        E = np.real(npc.inner(X, HX)).item()
+        E = np.real(npc.inner(X, HX, axes='labels', do_conj=True)).item()
         return E - self.energy_density * self.L - self.lambda_C1
 
     def infinite_sum_right(self, p, X):
@@ -525,7 +525,9 @@ class PlaneWaveExcitationEngine(Algorithm):
             ) + append_right_env([self.ALs[i]], [self.ARs[i]], RB, Ws=[self.Ws[i]], bonds=bond)
         R = RB
 
-        return _geometric_sum(self, R, lambda v: append_right_env(self.ALs, self.ARs, v, Ws=self.Ws, bonds=[self._bt(i) for i in range(self.L)]), np.exp(-1.0j * p * self.L), right=True)
+        bonds = [self._bt(i) for i in range(self.L)]
+        T = lambda v: append_right_env(self.ALs, self.ARs, v, Ws=self.Ws, bonds=bonds)  # noqa: E731
+        return _geometric_sum(self, R, T, np.exp(-1.0j * p * self.L), right=True)
 
     def infinite_sum_left(self, p, X):
         """Infinite sum to the left, see Eq. (194) in :cite:`vanderstraeten2019`
@@ -568,7 +570,9 @@ class PlaneWaveExcitationEngine(Algorithm):
             ) + append_left_env([self.ARs[i]], [self.ALs[i]], LB, Ws=[self.Ws[i]], bonds=bond)
         L = LB
 
-        return _geometric_sum(self, L, lambda v: append_left_env(self.ARs, self.ALs, v, Ws=self.Ws, bonds=[self._bt(i + 1) for i in range(self.L)]), np.exp(1.0j * p * self.L), right=False)
+        bonds = [self._bt(i + 1) for i in range(self.L)]
+        T = lambda v: append_left_env(self.ARs, self.ALs, v, Ws=self.Ws, bonds=bonds)  # noqa: E731
+        return _geometric_sum(self, L, T, np.exp(1.0j * p * self.L), right=False)
 
     class Aligned_Effective_H(NpcLinearOperator):
         r"""Class defining the effective Hamiltonian for the excitation tensors `X`.
@@ -912,8 +916,8 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
                 uniform strength of the energy boosts (instead of specifying a list), default to E_boost=100
 
         """
-        self.aligned_H = self.Aligned_Effective_H(self, p)
         _require_neutral(self.H, qtotal_change)
+        self.aligned_H = self.Aligned_Effective_H(self, p)
         self.unaligned_H = self.Unaligned_Effective_H(self, p)
         effective_H = SumNpcLinearOperator(self.aligned_H, self.unaligned_H)
         _reset_sum_stats(self)
@@ -975,7 +979,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         self.unaligned_H = self.Unaligned_Effective_H(self, p)
         effective_H = SumNpcLinearOperator(self.aligned_H, self.unaligned_H)
         HX = effective_H.matvec(X)
-        E = np.real(npc.inner(X, HX)).item()
+        E = np.real(npc.inner(X, HX, axes='labels', do_conj=True)).item()
         return E - self.lambda_C1 - self.energy_density * (self.L * multiple_unit_cell)
 
     def attach_right(self, VL, X, As, R, Ws=None, bonds=None):
@@ -1058,7 +1062,9 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
         """
         R = self._starting_right_TR(X)
 
-        return _geometric_sum(self, R, lambda v: append_right_env(self.ALs, self.ARs, v, Ws=self.Ws, bonds=[self._bt(i) for i in range(self.L)]), np.exp(-1.0j * p * self.L), right=True)
+        bonds = [self._bt(i) for i in range(self.L)]
+        T = lambda v: append_right_env(self.ALs, self.ARs, v, Ws=self.Ws, bonds=bonds)  # noqa: E731
+        return _geometric_sum(self, R, T, np.exp(-1.0j * p * self.L), right=True)
 
     def attach_left(self, VL, X, As, L, Ws=None, bonds=None):
         """Attach excitation tensors to a left environment
@@ -1158,7 +1164,9 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
             self.shift_unit_cell = 1
         LB = np.exp(1.0j * p * self.L * self.shift_unit_cell) * self._starting_left_TL(X)
 
-        return _geometric_sum(self, LB, lambda v: append_left_env(self.ARs, self.ALs, v, Ws=self.Ws, bonds=[self._bt(i + 1) for i in range(self.L)]), np.exp(1.0j * p * self.L), right=False)
+        bonds = [self._bt(i + 1) for i in range(self.L)]
+        T = lambda v: append_left_env(self.ARs, self.ALs, v, Ws=self.Ws, bonds=bonds)  # noqa: E731
+        return _geometric_sum(self, LB, T, np.exp(1.0j * p * self.L), right=False)
 
     class Aligned_Effective_H(NpcLinearOperator):
         r"""Class defining the effective Hamiltonian for the aligned case.
@@ -1220,7 +1228,7 @@ class MultiSitePlaneWaveExcitationEngine(Algorithm):
                             RW = npc.tensordot(RW, self.ARs[(n + i) % L].conj(), axes=(['p', 'vL*'], ['p*', 'vR*']))
                         else:
                             RW.ireplace_label('p', 'p' + str(n))
-                        if n != j:  # bond i+j is the join (added in the LW chain); ket charge: B legs
+                        if n != j:  # bond i+j is the join, held by LW; ket charge: B legs
                             RW = add_bond_term_right(RW, bt(n + i), ['vL'] + [f'p{m}' for m in range(n - j)])
 
                     for k in range(j):
