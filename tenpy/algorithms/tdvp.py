@@ -109,6 +109,8 @@ class TDVPEngine(TimeEvolutionAlgorithm, Sweep):
         options.deprecated_alias(
             'lanczos_options', 'lanczos_params', 'See also https://github.com/tenpy/tenpy/issues/459'
         )
+        if model.H_MPO.has_bond_terms:
+            raise NotImplementedError('TDVP with bond terms')
         super().__init__(psi, model, options, **kwargs)
         self.Krylov_params = options.subconfig('Krylov_params')
 

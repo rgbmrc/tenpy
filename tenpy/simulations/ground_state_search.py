@@ -327,6 +327,7 @@ class OrthogonalExcitations(GroundStateSearch):
 
     def __init__(self, options, *, orthogonal_to=None, **kwargs):
         super().__init__(options, **kwargs)
+        self.model.H_MPO._no_bond_terms('OrthogonalExcitations')  # needs MPO.extract_segment
         resume_data = kwargs.get('resume_data', {})
         if orthogonal_to is None and 'orthogonal_to' in resume_data:
             orthogonal_to = kwargs['resume_data']['orthogonal_to']
@@ -543,6 +544,7 @@ class OrthogonalExcitations(GroundStateSearch):
         """Change the charge sector of :attr:`psi` in place."""
         if self.psi.chinfo.qnumber == 0:
             raise ValueError("can't switch charge sector with trivial charges!")
+        self.model.H_MPO._no_bond_terms('switch_charge_sector')  # changes the raw bond charges
         self.logger.info('switch charge sector of the ground state [contracts environments from right]')
         apply_local_op = self.options.get('apply_local_op', None)
         switch_charge_sector = self.options.get('switch_charge_sector', None)

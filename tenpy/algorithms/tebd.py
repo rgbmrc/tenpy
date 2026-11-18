@@ -97,6 +97,8 @@ class TEBDEngine(TimeEvolutionAlgorithm):
     """
 
     def __init__(self, psi, model, options, **kwargs):
+        if getattr(getattr(model, 'H_MPO', None), 'has_bond_terms', False):
+            raise NotImplementedError('TEBD with bond terms')  # would silently ignore them
         TimeEvolutionAlgorithm.__init__(self, psi, model, options, **kwargs)
         self._trunc_err_bonds = [TruncationError() for i in range(psi.L + 1)]
         self._U = None

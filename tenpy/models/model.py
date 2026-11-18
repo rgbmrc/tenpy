@@ -772,6 +772,7 @@ class MPOModel(Model):
 
         """
         H_MPO: mpo.MPO = self.H_MPO
+        H_MPO._no_bond_terms('calc_H_bond_from_MPO')
         sites = H_MPO.sites
         finite = H_MPO.bc == 'finite'
         L = H_MPO.L

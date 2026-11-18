@@ -197,6 +197,8 @@ class DMRGEngine(IterativeSweeps):
         self.diag_method = options.get('diag_method', 'default', str)
         self._entropy_approx = [None] * psi.L  # always left of a given site
         super().__init__(psi, model, options, **kwargs)
+        if self.diag_method == 'ED_all' and self.env.H.has_bond_terms:
+            raise NotImplementedError("diag_method='ED_all' with bond terms")  # would change the bond charges
         self.N_sweeps_check = self.options.get('N_sweeps_check', 1 if self.psi.finite else 10, int)
         default_min_sweeps = int(1.5 * self.N_sweeps_check)
         if self.chi_list is not None:

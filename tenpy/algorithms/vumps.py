@@ -155,6 +155,8 @@ class VUMPSEngine(IterativeSweeps):
         options.deprecated_alias(
             'lanczos_options', 'lanczos_params', 'See also https://github.com/tenpy/tenpy/issues/459'
         )
+        if model.H_MPO.has_bond_terms:
+            raise NotImplementedError('VUMPS with bond terms')
         super().__init__(psi, model, options, **kwargs)
         self.guess_init_env_data = self.env.get_initialization_data()
         self.env.clear()

@@ -160,6 +160,7 @@ class ExactDiag:
         if self._exceeds_max_size():
             return
         mpo = self.model.H_MPO
+        mpo._no_bond_terms('build_full_H_from_mpo')
         full_H = mpo.get_W(0).take_slice(mpo.get_IdL(0), 'wL')
         full_H.ireplace_labels(['p', 'p*'], [self._labels_p[0], self._labels_pconj[0]])
         for i in range(1, mpo.L):
