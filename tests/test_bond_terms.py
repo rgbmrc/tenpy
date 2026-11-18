@@ -119,9 +119,11 @@ PW_OPTS = {
 CHI_PW = 6  # plane-wave identities hold for any canonical state: keep the ground states small
 
 
-def pw_engine(M, upsi, size=None, **kw):
-    """Plane-wave engine (``size=None``: single-site engine)."""
+def pw_engine(M, upsi, size=None, run=False, **kw):
+    """Plane-wave engine (``size=None``: single-site engine); `run`: it will call ``run`` (else no Lanczos)."""
     opts = dict(PW_OPTS, **kw)
+    if not run:
+        opts.pop('lanczos_params')  # unused options warn (and warnings are errors)
     if size is None:
         return PlaneWaveExcitationEngine(upsi, M, opts)
     return MultiSitePlaneWaveExcitationEngine(upsi, M, dict(opts, excitation_size=size))
@@ -135,7 +137,7 @@ def pw_energy(M, upsi, p, size=None, tag=None):
     key = (tag, p, size)
     if tag is not None and key in _PW_CACHE:
         return _PW_CACHE[key]
-    eng = pw_engine(M, upsi, size)
+    eng = pw_engine(M, upsi, size, run=True)
     E, _, _ = eng.run(p, qtotal_change=[0], num_ev=2)
     res = (np.real(E[:2]), float(eng.energy_density))
     if tag is not None:
@@ -476,10 +478,11 @@ def test_idmrg(inf_nl):
     E2, psi2 = inf_nl['E'], inf_nl['psi']
     e_TM = M.H_MPO.expectation_value(psi2)
     assert abs(E2 - e_TM) < 1e-8, f'two-site iDMRG {E2:.12f} vs TM {e_TM:.12f}'
-    E1, psi1 = idmrg(M, engine=SingleSiteDMRGEngine, chi=CHI_PW)
-    assert abs(E1 - E2) < 1e-8, f'one-site {E1:.12f} vs two-site {E2:.12f}'
+    # at fixed chi the two engines land on different truncated states (also without bond terms): compare at chi=12
+    E2_12, _ = idmrg(M, chi=12)
+    E1, psi1 = idmrg(M, engine=SingleSiteDMRGEngine, chi=12)
+    assert abs(E1 - E2_12) < 1e-8, f'one-site {E1:.12f} vs two-site {E2_12:.12f}'
     assert abs(M.H_MPO.expectation_value(psi1) - E1) < 1e-8
-    # variational: the bond terms lower the GS energy relative to the TM energy of the plain GS
     # a constant c shifts the energy by exactly c per site (same state, TM and iDMRG)
     c = 0.37
     Mc = spin_model(L, 'infinite', bt=make_bt(L, False, c=c))
