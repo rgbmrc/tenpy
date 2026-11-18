@@ -1310,7 +1310,7 @@ class MPO(MPSGeometry):
         """
         if psi.finite:
             raise ValueError('not infinite MPS')
-        if np.linalg.norm(psi.norm_test()) > tol:
+        if np.linalg.norm(psi.norm_test()) > 1e-2 * tol:  # the energy error is first order, with a prefactor ~ 10
             psi = psi.copy()
             psi.canonical_form()
         guess = init_env_data.get('init_RP', None)
