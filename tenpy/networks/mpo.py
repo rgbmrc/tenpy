@@ -4198,9 +4198,54 @@ def _block_charges(T, labels):
     return T.chinfo.make_valid(sum(T.legs[a].charges[T._qdata[:, a]] for a in axes))
 
 
-def _add_bond_term(T, bond, labels, w, src_idx, dst_idx, sign):
-    """``T[w=dst] += sign * f(Q) * T[w=src]``, returning a new array (`T` is never modified)."""
+def _add_bond_term(T, bond, labels, w, src_idx, dst_idx, sign, inplace=False):
+    """``T[w=dst] += sign * f(Q) * T[w=src]``, returning a new array (`T` may be modified only if `inplace`)."""
     f = bond[0]
+    axis = T.get_leg_index(w)
+    leg = T.legs[axis]
+    qi_src, i_src = leg.get_qindex(src_idx)
+    qi_dst, i_dst = leg.get_qindex(dst_idx)
+    if T.dtype.kind in 'fc' and np.all(leg.charges[qi_src] == leg.charges[qi_dst]):
+        # fast path: blockwise on the blocks of T, no slicing/setitem of whole arrays
+        qdata = T._qdata
+        sel = np.nonzero(qdata[:, axis] == qi_src)[0]
+        if len(sel) == 0:
+            return T
+        vals = sign * np.asarray(f(_block_charges(T, labels)[sel]), dtype=float)
+        if vals.shape != (len(sel),):
+            raise ValueError(f'bond term returned shape {vals.shape}, expected {(len(sel),)}')
+        isrc = (slice(None),) * axis + (i_src,)
+        idst = (slice(None),) * axis + (i_dst,)
+        dst_size = int(leg.slices[qi_dst + 1] - leg.slices[qi_dst])
+        res = T if inplace else T.copy(deep=False)
+        data = res._data if inplace else list(T._data)
+        existing = {tuple(r): k for k, r in enumerate(qdata[qdata[:, axis] == qi_dst].tolist())}
+        rows_dst = np.nonzero(qdata[:, axis] == qi_dst)[0]
+        new_data, new_qdata = [], []
+        for j, v in zip(sel, vals):
+            row = qdata[j].copy()
+            row[axis] = qi_dst
+            k = existing.get(tuple(row.tolist()))
+            blk_src = data[j]
+            if k is None:  # create the missing block
+                shape = list(blk_src.shape)
+                shape[axis] = dst_size
+                blk = np.zeros(shape, dtype=np.result_type(T.dtype, vals.dtype))
+                blk[idst] = v * blk_src[isrc]
+                new_data.append(blk)
+                new_qdata.append(row)
+                continue
+            k = rows_dst[k]
+            blk = data[k] if inplace else data[k].copy()
+            blk[idst] += v * blk_src[isrc]
+            data[k] = blk
+        res._data = data
+        if new_data:
+            res._data = data + new_data
+            res._qdata = np.vstack([qdata, np.array(new_qdata, dtype=qdata.dtype)])
+            res._qdata_sorted = False
+            res.isort_qdata()
+        return res
     src = T.take_slice(src_idx, w)  # a (deep) copy
     if len(src._data) == 0:
         return T
@@ -4210,11 +4255,10 @@ def _add_bond_term(T, bond, labels, w, src_idx, dst_idx, sign):
     src = src.astype(np.result_type(src.dtype, vals.dtype), copy=False)
     for blk, v in zip(src._data, vals):
         blk *= v
-    axis = T.get_leg_index(w)
     return T + src.add_leg(T.get_leg(w), dst_idx, axis=axis, label=w)
 
 
-def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0):
+def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0, inplace=False):
     """Add a virtual bond term to a left-environment-like tensor, ``T[w=IdR] += sign * f(Q) T[w=IdL]``.
 
     Parameters
@@ -4231,6 +4275,8 @@ def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0):
         Label of the MPO leg.
     sign : float
         Prefactor, ``-1`` to remove an already included term (see :meth:`MPOEnvironment.full_contraction`).
+    inplace : bool
+        Allow modifying `T` (for a temporary `T`, never for cached environments); always use the returned array.
 
     Returns
     -------
@@ -4240,17 +4286,17 @@ def add_bond_term_left(T, bond, labels=('vR',), w='wR', sign=1.0):
     """
     if bond is None:
         return T
-    return _add_bond_term(T, bond, labels, w, bond[1], bond[2], sign)
+    return _add_bond_term(T, bond, labels, w, bond[1], bond[2], sign, inplace)
 
 
-def add_bond_term_right(T, bond, labels=('vL',), w='wL', sign=1.0):
+def add_bond_term_right(T, bond, labels=('vL',), w='wL', sign=1.0, inplace=False):
     """Add a virtual bond term to a right-environment-like tensor, ``T[w=IdL] += sign * f(Q) T[w=IdR]``.
 
     The counterpart of :func:`add_bond_term_left` for e.g. `RP` (labels ``'vL', 'wL', 'vL*'``).
     """
     if bond is None:
         return T
-    return _add_bond_term(T, bond, labels, w, bond[2], bond[1], sign)
+    return _add_bond_term(T, bond, labels, w, bond[2], bond[1], sign, inplace)
 
 
 def check_bond_charges_absolute(psi):

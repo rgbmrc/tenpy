@@ -1338,13 +1338,13 @@ class TwoSiteH(EffectiveH):
         labels = theta.get_leg_labels()
         if self.combine:
             theta = npc.tensordot(self.LHeff, theta, axes=['(vR.p0*)', '(vL.p0)'])
-            theta = add_bond_term_left(theta, self.bond, ['(vR*.p0)'])  # 'wR' is the middle bond
+            theta = add_bond_term_left(theta, self.bond, ['(vR*.p0)'], inplace=True)  # 'wR' is the middle bond
             theta = npc.tensordot(theta, self.RHeff, axes=[['wR', '(p1.vR)'], ['wL', '(p1*.vL)']])
             theta.ireplace_labels(['(vR*.p0)', '(p1.vL*)'], ['(vL.p0)', '(p1.vR)'])
         else:
             theta = npc.tensordot(self.LP, theta, axes=['vR', 'vL'])
             theta = npc.tensordot(self.W0, theta, axes=[['wL', 'p0*'], ['wR', 'p0']])
-            theta = add_bond_term_left(theta, self.bond, ['vR*', 'p0'])  # 'wR' is the middle bond
+            theta = add_bond_term_left(theta, self.bond, ['vR*', 'p0'], inplace=True)  # 'wR' is the middle bond
             theta = npc.tensordot(theta, self.W1, axes=[['wR', 'p1'], ['wL', 'p1*']])
             theta = npc.tensordot(theta, self.RP, axes=[['wR', 'vR'], ['wL', 'vL']])
             theta.ireplace_labels(['vR*', 'vL*'], ['vL', 'vR'])
